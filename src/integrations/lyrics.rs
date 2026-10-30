@@ -1,10 +1,12 @@
-//! Lyrics lookup: sidecar `.lrc`/`.txt` files, embedded tags and LRCLIB, with an on-disk cache.
+//! Lyrics lookup: sidecar `.lrc`/`.txt` files, embedded tags, LRCLIB and Genius, with an
+//! on-disk cache.
 //!
 //! Lookup order (first hit wins):
 //! 1. Local tracks: `<stem>.lrc` / `<stem>.txt` next to the audio file (or in a `Lyrics/` subfolder).
 //! 2. Local tracks: lyrics embedded in the file's tags.
 //! 3. The disk cache of earlier online lookups (positive and negative results).
 //! 4. LRCLIB (<https://lrclib.net>), when online lookups are enabled.
+//! 5. Genius (plain lyrics, no timing) for songs LRCLIB doesn't have.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;

@@ -343,6 +343,10 @@ impl Service {
         // taking it would jump back to that volume on the next song.
         cfg.playback.volume = self.cfg.playback.volume;
         let old = std::mem::replace(&mut self.cfg, cfg);
+        // Switching between stable and beta updates looks again at once.
+        if old.updates.beta != self.cfg.updates.beta {
+            self.check_updates(true);
+        }
 
         if old.playback != self.cfg.playback {
             for mpv in self.mpv.iter().chain(self.mpv_spare.iter()) {

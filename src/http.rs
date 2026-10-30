@@ -45,6 +45,10 @@ pub fn client() -> reqwest::Client {
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(30))
                 .pool_max_idle_per_host(2)
+                // A VPN switched on or off leaves pooled connections dead: drop idle ones
+                // soon, and notice dead ones in use.
+                .pool_idle_timeout(Duration::from_secs(30))
+                .tcp_keepalive(Duration::from_secs(30))
                 .build()
                 .expect("failed to build HTTP client")
         })

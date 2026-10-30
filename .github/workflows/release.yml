@@ -2,6 +2,11 @@
 # they need (mpv, yt-dlp, ffmpeg, the Inter font) and the Arch Linux package, and publishes them
 # as the GitHub release of the version in Cargo.toml. The apps' updater installs new releases
 # from there.
+#
+# Every release is a beta (a GitHub pre-release, offered only to copies with Beta updates on)
+# unless the pushed commit's message has [stable] in it, or the workflow is run by hand with
+# channel "stable". Running it as stable for a version already out as a beta turns that beta
+# into the stable release: the same files, now offered to everyone.
 name: Release
 
 on:
@@ -16,6 +21,12 @@ on:
       - "PKGBUILD"
       - ".github/workflows/release.yml"
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "beta, or stable (also turns this version's beta into the stable release)"
+        type: choice
+        options: [beta, stable]
+        default: beta
 
 # Read-only by default; only the job that publishes the release can write.
 permissions:
@@ -37,6 +48,9 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       publish: ${{ steps.check.outputs.publish }}
+      beta: ${{ steps.check.outputs.beta }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -44,12 +58,31 @@ jobs:
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # Through the environment, never into the script: the message is free text.
+          MESSAGE: ${{ github.event.head_commit.message }}
+          CHANNEL: ${{ inputs.channel }}
         run: |
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "::notice::v$VERSION is already published; bump the version to release again"
+          if [ "$CHANNEL" = stable ] || printf '%s' "$MESSAGE" | grep -qF '[stable]'; then
+            BETA=false
+          else
+            BETA=true
+          fi
+          echo "beta=$BETA" >> "$GITHUB_OUTPUT"
+          if IS_BETA=$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease 2> /dev/null); then
             echo "publish=false" >> "$GITHUB_OUTPUT"
+            if [ "$IS_BETA" = true ] && [ "$BETA" = false ]; then
+              # Promote the tested beta: the same files, now the stable release (its notes
+              # lose the "Beta" line).
+              gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body \
+                | sed '1{/^\*\*Beta\.\*\*/{N;d}}' > notes.md
+              gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest \
+                --title "Sumo $VERSION" --notes-file notes.md
+              echo "::notice::v$VERSION was a beta and is now the stable release"
+            else
+              echo "::notice::v$VERSION is already published; bump the version to release again"
+            fi
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
@@ -434,6 +467,7 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          BETA: ${{ needs.version.outputs.beta }}
         run: |
           set -euo pipefail
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -463,5 +497,11 @@ jobs:
           cat ../notes.md
           # Never replaces the files of a published release (this fails if one appeared since
           # the version check).
-          gh release create "v$VERSION" ./* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Sumo $VERSION" --notes-file ../notes.md
+          if [ "$BETA" = true ]; then
+            { echo "**Beta.** Offered to copies with *Settings › Updates › Beta updates* on; everyone else gets it once it's made the stable release."; echo; cat ../notes.md; } > ../beta-notes.md
+            gh release create "v$VERSION" ./* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Sumo $VERSION beta" --notes-file ../beta-notes.md --prerelease --latest=false
+          else
+            gh release create "v$VERSION" ./* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Sumo $VERSION" --notes-file ../notes.md
+          fi

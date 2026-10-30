@@ -166,8 +166,8 @@ pub(super) fn home(ui: &mut Ui, cx: &mut Cx) {
 
 pub(super) fn shortcut_card(ui: &mut Ui, cx: &mut Cx, p: &Playlist, w: f32) {
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 64.0), Sense::click());
-    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS), CARD);
-    widgets::fade_fill(ui, resp.id, rect, RADIUS, resp.hovered(), HOVER);
+    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS), pal().card);
+    widgets::fade_fill(ui, resp.id, rect, RADIUS, resp.hovered(), pal().hover);
     let art = Rect::from_min_size(rect.min + vec2(6.0, 6.0), vec2(52.0, 52.0));
     widgets::playlist_cover(ui, cx.art, p, art, 10);
     let here = widgets::plays_from(cx, &p.name, |id| p.track_ids.iter().any(|t| t == id));
@@ -227,7 +227,7 @@ pub(super) fn onboarding(ui: &mut Ui, cx: &mut Cx) {
                 "Sumo plays your local files, Spotify (Premium) and SoundCloud in one place, \
                  with synced lyrics, Discord status and Last.fm scrobbling.",
             )
-            .color(TEXT_DIM),
+            .color(pal().text_dim),
         );
         ui.add_space(12.0);
         for (glyph, color, text) in [
@@ -253,7 +253,7 @@ pub(super) fn onboarding(ui: &mut Ui, cx: &mut Cx) {
             ),
             (
                 icon::LINK,
-                TEXT_DIM,
+                pal().text_dim,
                 "Or paste any Spotify, SoundCloud or Apple Music link into the search bar",
             ),
         ] {

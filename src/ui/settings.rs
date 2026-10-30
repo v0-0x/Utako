@@ -41,13 +41,13 @@ fn section(ui: &mut Ui, glyph: &str, color: Color32, title: &str, add: impl FnOn
 }
 
 fn hint(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).size(12.0).color(TEXT_FAINT));
+    ui.label(RichText::new(text).size(12.0).color(pal().text_faint));
 }
 
 fn status(ui: &mut Ui, s: &AccountStatus) {
     let (text, color) = match s {
-        AccountStatus::Off => ("Not connected".to_string(), TEXT_FAINT),
-        AccountStatus::Working(m) => (m.clone(), TEXT_DIM),
+        AccountStatus::Off => ("Not connected".to_string(), pal().text_faint),
+        AccountStatus::Working(m) => (m.clone(), pal().text_dim),
         AccountStatus::Connected(name) if name.is_empty() => {
             ("Connected".to_string(), Color32::from_rgb(0x4a, 0xd6, 0x8a))
         }
@@ -63,7 +63,7 @@ fn status(ui: &mut Ui, s: &AccountStatus) {
 }
 
 fn text_field(ui: &mut Ui, label: &str, value: &mut String, hint_text: &str, password: bool) {
-    ui.label(RichText::new(label).color(TEXT_DIM));
+    ui.label(RichText::new(label).color(pal().text_dim));
     ui.add(
         egui::TextEdit::singleline(value)
             .hint_text(hint_text)
@@ -86,10 +86,10 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 let mut remove = None;
                 for (i, f) in cfg.library.folders.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        if widgets::icon_button(ui, icon::X, 13.0, TEXT_DIM, "Remove folder").clicked() {
+                        if widgets::icon_button(ui, icon::X, 13.0, pal().text_dim, "Remove folder").clicked() {
                             remove = Some(i);
                         }
-                        ui.label(RichText::new(icon::FOLDER_OPEN).family(theme::icons()).color(TEXT_DIM));
+                        ui.label(RichText::new(icon::FOLDER_OPEN).family(theme::icons()).color(pal().text_dim));
                         ui.add(egui::Label::new(f.display().to_string()).truncate());
                     });
                 }
@@ -148,7 +148,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 ui.add_space(6.0);
                 ui.checkbox(&mut cfg.spotify.enabled, "Enable Spotify");
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Quality").color(TEXT_DIM));
+                    ui.label(RichText::new("Quality").color(pal().text_dim));
                     egui::ComboBox::from_id_salt("bitrate")
                         .selected_text(format!("{} kbps", cfg.spotify.bitrate))
                         .show_ui(ui, |ui| {
@@ -166,7 +166,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 // Windows and macOS have one system output that Spotify follows.
                 if cfg!(target_os = "linux") {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Audio output").color(TEXT_DIM));
+                        ui.label(RichText::new("Audio output").color(pal().text_dim));
                         let label = |v: &str| match v {
                             "pulseaudio" => "PipeWire / PulseAudio",
                             "alsa" => "ALSA",
@@ -214,7 +214,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     status(ui, &cx.feed.spotify_web_api);
                     ui.add_space(4.0);
                     ui.collapsing("Or log in to your app in the browser (Redirect URI)", |ui| {
-                        ui.label(RichText::new("Redirect URI (must match your app's exactly)").color(TEXT_DIM));
+                        ui.label(RichText::new("Redirect URI (must match your app's exactly)").color(pal().text_dim));
                         let default_uri = crate::player::oauth::redirect_uri(cfg.spotify.web_api_redirect_port);
                         ui.horizontal(|ui| {
                             ui.add(
@@ -270,7 +270,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                         );
                     }
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Login redirect port").color(TEXT_DIM));
+                        ui.label(RichText::new("Login redirect port").color(pal().text_dim));
                         ui.add(egui::DragValue::new(&mut cfg.spotify.redirect_port).range(1024..=65535));
                         if ui.button("Reset").clicked() {
                             cfg.spotify.client_id = SPOTIFY_DEFAULT_CLIENT_ID.into();
@@ -298,7 +298,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
             // ---------------------------------------------------------- downloads
             section(ui, icon::DOWNLOAD_SIMPLE, TEXT, "Downloads", |ui| {
                 let root = cfg.library_root().to_string_lossy().into_owned();
-                ui.label(RichText::new("Download folder").color(TEXT_DIM));
+                ui.label(RichText::new("Download folder").color(pal().text_dim));
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut cfg.downloads.folder)
@@ -343,7 +343,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                             });
                         }
                         None => {
-                            ui.label(RichText::new("Checking yt-dlp…").size(12.5).color(TEXT_FAINT));
+                            ui.label(RichText::new("Checking yt-dlp…").size(12.5).color(pal().text_faint));
                         }
                     }
                     ui.add_space(4.0);
@@ -386,7 +386,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                      playlists, then plays each song from your local files, Spotify or SoundCloud.",
                 );
                 ui.add_space(6.0);
-                ui.label(RichText::new("Import a Library.xml / .m3u file").color(TEXT_DIM));
+                ui.label(RichText::new("Import a Library.xml / .m3u file").color(pal().text_dim));
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut st.import_path)
@@ -465,7 +465,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
             section(ui, icon::HEADPHONES, cx.accent, "Playback", |ui| {
                 ui.checkbox(&mut cfg.playback.gapless, "Gapless playback");
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Crossfade").color(TEXT_DIM));
+                    ui.label(RichText::new("Crossfade").color(pal().text_dim));
                     ui.add(
                         egui::Slider::new(&mut cfg.playback.crossfade, 0.0..=12.0)
                             .step_by(0.5)
@@ -499,7 +499,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     st.devices_requested = true;
                     cx.actions.push(Action::Cmd(Command::ListAudioDevices));
                 }
-                ui.label(RichText::new("Output device (local files & SoundCloud)").color(TEXT_DIM));
+                ui.label(RichText::new("Output device (local files & SoundCloud)").color(pal().text_dim));
                 ui.horizontal(|ui| {
                     let current = cfg.playback.audio_device.clone();
                     let shown = if current.is_empty() {
@@ -553,20 +553,35 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 if cfg!(not(any(windows, target_os = "macos"))) {
                     ui.checkbox(&mut cfg.ui.notifications, "Show a notification when a song starts");
                 }
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Accent colour").color(TEXT_DIM));
+                super::panels::theme_choices(ui, cx);
+                ui.add_space(6.0);
+                ui.label(RichText::new("Accent colour").color(pal().text_dim));
+                ui.horizontal_wrapped(|ui| {
+                    for (name, hex) in super::themes::ACCENTS {
+                        let c = [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8];
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
+                        let on = cfg.ui.accent == c;
+                        ui.painter()
+                            .circle_filled(rect.center(), 10.0, Color32::from_rgb(c[0], c[1], c[2]));
+                        if on || resp.hovered() {
+                            ui.painter().circle_stroke(rect.center(), 12.0, egui::Stroke::new(1.5, TEXT));
+                        }
+                        if resp.on_hover_text(name).clicked() {
+                            cfg.ui.accent = c;
+                        }
+                    }
                     ui.color_edit_button_srgb(&mut cfg.ui.accent);
                 });
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Interface scale").color(TEXT_DIM));
+                    ui.label(RichText::new("Interface scale").color(pal().text_dim));
                     let r = ui.add(egui::Slider::new(&mut cfg.ui.scale, super::SCALE.0..=super::SCALE.1).step_by(0.05));
                     if r.drag_stopped() || r.lost_focus() {
                         ui.ctx().set_zoom_factor(cfg.ui.scale);
                     }
-                    ui.label(RichText::new("Ctrl + / Ctrl − / Ctrl 0").color(TEXT_FAINT).small());
+                    ui.label(RichText::new("Ctrl + / Ctrl − / Ctrl 0").color(pal().text_faint).small());
                 });
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Covers kept in memory").color(TEXT_DIM));
+                    ui.label(RichText::new("Covers kept in memory").color(pal().text_dim));
                     ui.add(egui::DragValue::new(&mut cfg.ui.art_cache_size).range(32..=2000));
                 });
                 hint(ui, "Fewer cached covers = less RAM. Takes effect after a restart.");
@@ -577,6 +592,16 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 use crate::service::UpdateStatus;
                 ui.label(format!("You have Sumo {}", env!("CARGO_PKG_VERSION")));
                 ui.checkbox(&mut cfg.updates.check, "Check for updates automatically");
+                ui.checkbox(&mut cfg.updates.beta, "Beta updates");
+                hint(
+                    ui,
+                    if cfg.updates.beta {
+                        "You get new versions first, before everyone else. Betas can have bugs; turning this off keeps \
+                         the beta until a newer stable version comes out."
+                    } else {
+                        "Turn on to get new versions first, as betas, before they go out to everyone."
+                    },
+                );
                 let update = &cx.feed.update;
                 ui.horizontal(|ui| {
                     let busy = matches!(
@@ -609,19 +634,20 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                             ui.label(RichText::new(why).color(DANGER));
                         }
                         (_, Some(release)) => {
-                            ui.label(RichText::new(format!("Version {} is available", release.version)).strong());
+                            let beta = if release.beta { " beta" } else { "" };
+                            ui.label(RichText::new(format!("Version {}{beta} is available", release.version)).strong());
                             if crate::updater::can_install() && ui.button("Update now").clicked() {
                                 cx.actions.push(Action::Cmd(Command::InstallUpdate));
                             }
                         }
                         (UpdateStatus::UpToDate, None) => {
-                            ui.label(RichText::new("You have the newest version").color(TEXT_DIM));
+                            ui.label(RichText::new("You have the newest version").color(pal().text_dim));
                         }
                         _ => {}
                     }
                 });
                 if !crate::updater::can_install() {
-                    hint(ui, "On Linux, update the way you installed: git pull && makepkg -sif");
+                    hint(ui, "On Linux, update the way you installed: cd sumo-music && git pull && makepkg -sif");
                 } else if crate::updater::NEEDS_PASSWORD {
                     hint(
                         ui,
@@ -673,7 +699,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                         }
                         let name = saved.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                         ui.add(
-                            egui::Label::new(RichText::new(format!("Saved as {name}")).small().color(TEXT_DIM))
+                            egui::Label::new(RichText::new(format!("Saved as {name}")).small().color(pal().text_dim))
                                 .truncate(),
                         )
                         .on_hover_text(saved.display().to_string());
@@ -726,18 +752,18 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
             });
 
             // ---------------------------------------------------------- about
-            section(ui, icon::INFO, TEXT_DIM, "About", |ui| {
+            section(ui, icon::INFO, pal().text_dim, "About", |ui| {
                 ui.horizontal(|ui| {
                     theme::logo(ui, cx.logo, 40.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new("Sumo").font(theme::bold_font(18.0)));
-                        ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(TEXT_DIM));
+                        ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(pal().text_dim));
                     });
                 });
                 ui.add_space(4.0);
-                ui.label(RichText::new(format!("Memory in use: {rss_mb:.0} MB (mpv runs as a separate process)")).color(TEXT_DIM));
-                ui.label(RichText::new(format!("Config: {}", paths.config_file().display())).color(TEXT_FAINT).small());
-                ui.label(RichText::new(format!("Data: {}", paths.data_dir.display())).color(TEXT_FAINT).small());
+                ui.label(RichText::new(format!("Memory in use: {rss_mb:.0} MB (mpv runs as a separate process)")).color(pal().text_dim));
+                ui.label(RichText::new(format!("Config: {}", paths.config_file().display())).color(pal().text_faint).small());
+                ui.label(RichText::new(format!("Data: {}", paths.data_dir.display())).color(pal().text_faint).small());
                 ui.add_space(4.0);
                 hint(
                     ui,

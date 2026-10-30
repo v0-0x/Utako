@@ -23,7 +23,7 @@ pub(super) fn now_playing(ui: &mut Ui, cx: &mut Cx) {
             }
             let text = egui::RichText::new(format!("PLAYING FROM {}", cx.player.context.to_uppercase()))
                 .size(12.0)
-                .color(TEXT_DIM);
+                .color(pal().text_dim);
             match widgets::context_action(cx) {
                 Some(go) => {
                     let link = ui
@@ -87,7 +87,7 @@ pub(super) fn track_titles(ui: &mut Ui, cx: &mut Cx, t: &Track, w: f32) {
         r.min,
         &t.artist,
         theme::font(17.0),
-        TEXT_DIM,
+        pal().text_dim,
         w,
     );
     if artist.clicked() {
@@ -101,7 +101,7 @@ pub(super) fn track_titles(ui: &mut Ui, cx: &mut Cx, t: &Track, w: f32) {
             r.min,
             &t.album,
             theme::font(13.5),
-            TEXT_FAINT,
+            pal().text_faint,
             w,
         );
         if album.clicked() {
@@ -121,7 +121,7 @@ pub(super) fn track_titles(ui: &mut Ui, cx: &mut Cx, t: &Track, w: f32) {
                 r.left_top() + vec2(0.0, 2.0),
                 &q.label(),
                 theme::font(12.5),
-                TEXT_DIM,
+                pal().text_dim,
                 r.width() - 70.0,
             );
             widgets::quality_badge(ui, Pos2::new(used.right() + 8.0, used.center().y), q);

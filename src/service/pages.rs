@@ -12,6 +12,8 @@ impl Service {
             .then(|| self.web_auth().map(|auth| (auth, self.spotify_api.clone())))
             .flatten();
         let sc = (!q.is_empty() && self.cfg.soundcloud.enabled).then(|| self.soundcloud.clone());
+        self.search_seq += 1;
+        let seq = self.search_seq;
         self.shared.feed.write().unwrap().search = SearchState {
             query: q.clone(),
             spotify_pending: spotify.is_some(),
@@ -33,6 +35,7 @@ impl Service {
                     Err(e) => (Err(e), Default::default()),
                 };
                 let _ = tx.send(Internal::SearchResults {
+                    seq,
                     query: q,
                     source: Source::Spotify,
                     tracks,
@@ -62,6 +65,7 @@ impl Service {
                 let playlists = quietly("playlist", playlists);
                 let ok = tracks.is_ok();
                 let _ = tx.send(Internal::SearchResults {
+                    seq,
                     query: q,
                     source: Source::SoundCloud,
                     tracks,

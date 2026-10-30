@@ -325,6 +325,14 @@ pub struct UiConfig {
     pub maximized: bool,
     /// A desktop notification when a new song starts.
     pub notifications: bool,
+    /// The color theme (`themes::THEMES`).
+    pub theme: String,
+    /// Holiday themes: "auto" (by the date), "off", or a holiday that's always on.
+    pub holiday: String,
+    /// The holiday animations (snow, bats...).
+    pub holiday_effects: bool,
+    /// The holiday whose "it's on" notice was last shown, with its year ("halloween-2026").
+    pub holiday_seen: String,
 }
 
 /// What each part of the Last.fm profile page shows.
@@ -354,6 +362,10 @@ impl Default for UiConfig {
             window_size: None,
             maximized: false,
             notifications: false,
+            theme: "sumo".into(),
+            holiday: "auto".into(),
+            holiday_effects: true,
+            holiday_seen: String::new(),
         }
     }
 }
@@ -367,6 +379,8 @@ pub struct UpdatesConfig {
     pub repo: String,
     /// A version the user chose to skip.
     pub skipped: String,
+    /// Also offer beta versions (GitHub pre-releases), to try what's coming first.
+    pub beta: bool,
 }
 
 impl Default for UpdatesConfig {
@@ -375,6 +389,7 @@ impl Default for UpdatesConfig {
             check: true,
             repo: UPDATES_REPO.into(),
             skipped: String::new(),
+            beta: false,
         }
     }
 }

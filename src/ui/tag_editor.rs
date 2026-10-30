@@ -185,12 +185,12 @@ impl TagEditor {
             } else {
                 self.tracks[0].uri.clone()
             };
-            ui.label(RichText::new(sub).small().color(TEXT_FAINT));
+            ui.label(RichText::new(sub).small().color(pal().text_faint));
             ui.add_space(10.0);
             if let Some(e) = &self.error {
                 ui.colored_label(theme::DANGER, e);
                 ui.add_space(8.0);
-                if widgets::pill(ui, "Close", CARD, TEXT).clicked() {
+                if widgets::pill(ui, "Close", pal().card, TEXT).clicked() {
                     open = false;
                 }
                 return;
@@ -231,7 +231,7 @@ impl TagEditor {
                     }
                 });
             if let Some(note) = &self.note {
-                ui.label(RichText::new(note).small().color(TEXT_DIM));
+                ui.label(RichText::new(note).small().color(pal().text_dim));
             }
             ui.add_space(10.0);
 
@@ -247,7 +247,7 @@ impl TagEditor {
                     if widgets::pill(ui, "Discard", theme::DANGER, TEXT).clicked() {
                         open = false;
                     }
-                    if widgets::pill(ui, "Keep editing", CARD, TEXT).clicked() {
+                    if widgets::pill(ui, "Keep editing", pal().card, TEXT).clicked() {
                         self.confirm_close = false;
                     }
                 });
@@ -273,7 +273,7 @@ impl TagEditor {
                     }
                     open = false;
                 }
-                if widgets::pill(ui, "Cancel", CARD, TEXT).clicked() {
+                if widgets::pill(ui, "Cancel", pal().card, TEXT).clicked() {
                     cancel = true;
                 }
             });
@@ -299,7 +299,7 @@ impl TagEditor {
 
     fn fields(&mut self, ui: &mut egui::Ui) {
         let row = |ui: &mut egui::Ui, label: &str, value: &mut String, mixed: bool, width: f32| {
-            ui.label(RichText::new(label).color(TEXT_DIM));
+            ui.label(RichText::new(label).color(pal().text_dim));
             let hint = if mixed { "Several values" } else { "" };
             ui.add(egui::TextEdit::singleline(value).hint_text(hint).desired_width(width));
         };
@@ -329,7 +329,7 @@ impl TagEditor {
                     let (n, t) = (index(number), index(total));
                     let both = !self.several() || number.shared();
                     let label = if both { number.label() } else { total.label() };
-                    ui.label(RichText::new(label).color(TEXT_DIM));
+                    ui.label(RichText::new(label).color(pal().text_dim));
                     ui.horizontal(|ui| {
                         if both {
                             let mixed = self.original[n].is_none();
@@ -339,7 +339,7 @@ impl TagEditor {
                                     .hint_text(hint)
                                     .desired_width(48.0),
                             );
-                            ui.label(RichText::new("of").color(TEXT_DIM));
+                            ui.label(RichText::new("of").color(pal().text_dim));
                         }
                         let mixed = self.original[t].is_none();
                         let hint = if mixed { "…" } else { "" };
@@ -417,7 +417,7 @@ impl TagEditor {
                     self.cover = Cover::Keep;
                 }
             });
-            ui.label(RichText::new("or drop an image here").small().color(TEXT_FAINT));
+            ui.label(RichText::new("or drop an image here").small().color(pal().text_faint));
             if !self.several() {
                 ui.add_space(6.0);
                 if self.lookup.is_some() {

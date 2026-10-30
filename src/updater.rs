@@ -17,6 +17,8 @@ pub const SUMS_FILE: &str = "SHA256SUMS.txt";
 pub struct Release {
     /// "0.3.0" (without the tag's "v").
     pub version: String,
+    /// A beta (a GitHub pre-release), offered only to copies on the beta channel.
+    pub beta: bool,
     pub notes: String,
     /// The release's web page.
     pub page: String,
@@ -122,9 +124,15 @@ fn get(http: &reqwest::Client, url: &str, accept: &str) -> reqwest::RequestBuild
         .header("X-GitHub-Api-Version", "2022-11-28")
 }
 
-/// The newest release of `repo` ("owner/name"), which is public: no login needed.
-pub async fn latest(http: &reqwest::Client, api: &str, repo: &str) -> Result<Release> {
-    let url = format!("{api}/repos/{repo}/releases/latest");
+/// The newest release of `repo` ("owner/name"), which is public: no login needed. A copy on
+/// the beta channel (`beta`) gets the newest of the stable releases and the betas; any other
+/// copy the newest stable one only.
+pub async fn latest(http: &reqwest::Client, api: &str, repo: &str, beta: bool) -> Result<Release> {
+    let url = if beta {
+        format!("{api}/repos/{repo}/releases?per_page=20")
+    } else {
+        format!("{api}/repos/{repo}/releases/latest")
+    };
     let resp = get(http, &url, "application/vnd.github+json")
         .send()
         .await
@@ -137,7 +145,20 @@ pub async fn latest(http: &reqwest::Client, api: &str, repo: &str) -> Result<Rel
         _ => bail!("GitHub answered {}", resp.status()),
     }
     let json: Value = resp.json().await.context("unexpected answer from GitHub")?;
-    parse_release(&json).ok_or_else(|| anyhow!("unexpected answer from GitHub"))
+    if beta {
+        newest(&json).ok_or_else(|| anyhow!("no releases found"))
+    } else {
+        parse_release(&json).ok_or_else(|| anyhow!("unexpected answer from GitHub"))
+    }
+}
+
+/// The newest published release in a list of them (betas included; drafts never).
+pub fn newest(list: &Value) -> Option<Release> {
+    list.as_array()?
+        .iter()
+        .filter(|r| !r.get("draft").and_then(Value::as_bool).unwrap_or(false))
+        .filter_map(parse_release)
+        .reduce(|best, r| if is_newer(&r.version, &best.version) { r } else { best })
 }
 
 pub fn parse_release(json: &Value) -> Option<Release> {
@@ -167,6 +188,7 @@ pub fn parse_release(json: &Value) -> Option<Release> {
         .unwrap_or_default();
     let find = |name: &str| assets.iter().find(|a| a.name == name).cloned();
     Some(Release {
+        beta: json.get("prerelease").and_then(Value::as_bool).unwrap_or(false),
         asset: assets.iter().find(|a| is_platform_asset(&a.name, &version)).cloned(),
         sums: find(SUMS_FILE),
         notes: json.get("body").and_then(Value::as_str).unwrap_or_default().to_string(),
@@ -675,6 +697,12 @@ mod tests {
                     ("401 Unauthorized", "{}".to_string())
                 } else if head.starts_with("get /repos/o/r/releases/latest ") {
                     ("200 OK", r#"{"tag_name":"v9.9.9","assets":[]}"#.to_string())
+                } else if head.starts_with("get /repos/o/r/releases?per_page=20 ") {
+                    // Newest first, as GitHub lists them: a draft, a beta, the stable one.
+                    let list = r#"[{"tag_name":"v10.1.0","draft":true,"assets":[]},
+                        {"tag_name":"v10.0.0","prerelease":true,"assets":[]},
+                        {"tag_name":"v9.9.9","assets":[]}]"#;
+                    ("200 OK", list.to_string())
                 } else if head.starts_with("get /repos/o/busy/releases/latest ") {
                     ("403 Forbidden", r#"{"message":"API rate limit exceeded"}"#.to_string())
                 } else {
@@ -688,11 +716,15 @@ mod tests {
             }
         });
         let http = reqwest::Client::builder().no_proxy().build().unwrap();
-        let release = latest(&http, &api, "o/r").await.unwrap();
+        let release = latest(&http, &api, "o/r", false).await.unwrap();
         assert_eq!(release.version, "9.9.9");
-        let err = latest(&http, &api, "o/none").await.unwrap_err().to_string();
+        assert!(!release.beta);
+        // The beta channel gets the newest beta; drafts are never offered.
+        let release = latest(&http, &api, "o/r", true).await.unwrap();
+        assert_eq!((release.version.as_str(), release.beta), ("10.0.0", true));
+        let err = latest(&http, &api, "o/none", false).await.unwrap_err().to_string();
         assert_eq!(err, "no releases found");
-        let err = latest(&http, &api, "o/busy").await.unwrap_err().to_string();
+        let err = latest(&http, &api, "o/busy", false).await.unwrap_err().to_string();
         assert!(err.contains("busy"), "{err}");
     }
 }

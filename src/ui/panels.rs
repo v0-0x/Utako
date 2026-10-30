@@ -47,7 +47,7 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
     };
     panel
         .show_separator_line(false)
-        .frame(egui::Frame::new().fill(WINDOW_BG).inner_margin(Margin {
+        .frame(egui::Frame::new().fill(pal().window_bg).inner_margin(Margin {
             left: GAP as i8,
             right: 0,
             top: GAP as i8,
@@ -128,7 +128,7 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                             format!("Scanning {done}/{total}…")
                         })
                         .small()
-                        .color(TEXT_FAINT),
+                        .color(pal().text_faint),
                     );
                 }
             }
@@ -137,7 +137,7 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                 (false, _) => 50.0,
                 (true, false) => 66.0,
                 (true, true) => 92.0,
-            };
+            } + 38.0; // Themes
             let list_h = (ui.available_height() - bottom).max(40.0);
             let view = st.view.clone();
             let collapsed = st.collapsed;
@@ -158,7 +158,7 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                             "Playlists you make or import from Spotify, SoundCloud and Apple Music show up here.",
                         )
                         .small()
-                        .color(TEXT_FAINT),
+                        .color(pal().text_faint),
                     );
                 }
                 egui::ScrollArea::vertical()
@@ -171,6 +171,7 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                     });
             });
             ui.add_space(6.0);
+            themes_button(ui, cx, st.collapsed);
             if !super::profile::sidebar_account(ui, cx, st.view, st.collapsed) {
                 nav_item(ui, cx, icon::GEAR, "Settings", View::Settings, st.view, st.collapsed);
             }
@@ -220,7 +221,7 @@ fn section_label(ui: &mut Ui, text: &str, collapsed: bool) {
                 Pos2::new(r.left() + 14.0, r.center().y),
                 Pos2::new(r.right() - 14.0, r.center().y),
             ],
-            Stroke::new(1.0, HOVER),
+            Stroke::new(1.0, pal().hover),
         );
         return;
     }
@@ -230,7 +231,7 @@ fn section_label(ui: &mut Ui, text: &str, collapsed: bool) {
         Align2::LEFT_CENTER,
         text.to_uppercase(),
         theme::bold_font(11.0),
-        TEXT_FAINT,
+        pal().text_faint,
     );
 }
 
@@ -254,11 +255,11 @@ fn nav_item(
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
     let hovered = resp.hovered();
     if active {
-        ui.painter().rect_filled(rect, CornerRadius::same(10), SELECTED);
+        ui.painter().rect_filled(rect, CornerRadius::same(10), pal().selected);
     } else {
-        widgets::fade_fill(ui, resp.id, rect, 10, hovered, CARD);
+        widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().card);
     }
-    let color = if active || hovered { TEXT } else { TEXT_DIM };
+    let color = if active || hovered { TEXT } else { pal().text_dim };
     let font = if active {
         theme::fill_icon_font(18.0)
     } else {
@@ -298,7 +299,7 @@ fn playlists_header(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
         Align2::LEFT_CENTER,
         "PLAYLISTS",
         theme::bold_font(11.0),
-        TEXT_FAINT,
+        pal().text_faint,
     );
     let plus = Rect::from_center_size(Pos2::new(r.right() - 14.0, r.center().y), vec2(24.0, 24.0));
     let resp = ui
@@ -306,14 +307,14 @@ fn playlists_header(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text("New playlist");
     if resp.hovered() {
-        ui.painter().rect_filled(plus, CornerRadius::same(6), CARD);
+        ui.painter().rect_filled(plus, CornerRadius::same(6), pal().card);
     }
     theme::paint_icon(
         ui.painter(),
         plus.center(),
         icon::PLUS,
         theme::icon_font(15.0),
-        if resp.hovered() { TEXT } else { TEXT_DIM },
+        if resp.hovered() { TEXT } else { pal().text_dim },
     );
     if resp.clicked() {
         cx.actions.push(Action::NewPlaylist(Vec::new()));
@@ -328,9 +329,9 @@ fn playlist_row(ui: &mut Ui, cx: &mut Cx, p: &crate::model::Playlist, view: &Vie
     let active = *view == View::Playlist(p.id.clone());
     let hovered = resp.hovered() || resp.context_menu_opened();
     if active {
-        ui.painter().rect_filled(rect, CornerRadius::same(10), SELECTED);
+        ui.painter().rect_filled(rect, CornerRadius::same(10), pal().selected);
     } else {
-        widgets::fade_fill(ui, resp.id, rect, 10, hovered, CARD);
+        widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().card);
     }
     let art = if collapsed {
         Rect::from_center_size(rect.center(), vec2(34.0, 34.0))
@@ -353,7 +354,7 @@ fn playlist_row(ui: &mut Ui, cx: &mut Cx, p: &crate::model::Playlist, view: &Vie
             } else if active || hovered {
                 TEXT
             } else {
-                TEXT_DIM
+                pal().text_dim
             },
             rect.right() - x - right_icon_w,
         );
@@ -442,7 +443,7 @@ fn search_box(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, rect: Rect) {
     ui.painter().rect_filled(
         rect,
         CornerRadius::same(10),
-        if hovered && !focused { HOVER } else { CARD },
+        if hovered && !focused { pal().hover } else { pal().card },
     );
     if focused {
         ui.painter().rect_stroke(
@@ -457,7 +458,7 @@ fn search_box(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, rect: Rect) {
         Pos2::new(rect.left() + 18.0, rect.center().y),
         icon::MAGNIFYING_GLASS,
         theme::icon_font(16.0),
-        if focused { TEXT } else { TEXT_DIM },
+        if focused { TEXT } else { pal().text_dim },
     );
     let clear_w = if st.search_text.is_empty() { 10.0 } else { 30.0 };
     let edit_rect = Rect::from_min_max(
@@ -469,7 +470,7 @@ fn search_box(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, rect: Rect) {
         edit_rect,
         egui::TextEdit::singleline(st.search_text)
             .id(edit_id)
-            .hint_text(egui::RichText::new("Search or paste a link").color(TEXT_FAINT))
+            .hint_text(egui::RichText::new("Search or paste a link").color(pal().text_faint))
             .frame(egui::Frame::NONE)
             .margin(Margin::ZERO)
             .font(theme::font(14.0))
@@ -489,7 +490,7 @@ fn search_box(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, rect: Rect) {
             x.center(),
             icon::X_CIRCLE,
             theme::fill_icon_font(16.0),
-            if xr.hovered() { TEXT } else { TEXT_FAINT },
+            if xr.hovered() { TEXT } else { pal().text_faint },
         );
         if xr.clicked() {
             st.search_text.clear();
@@ -541,9 +542,15 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
         return;
     }
     let version = release.version.clone();
+    // How it's named on the bar: "0.7.0 beta" for a beta.
+    let shown = if release.beta {
+        format!("{version} beta")
+    } else {
+        version.clone()
+    };
     let page = release.page.clone();
     egui::Frame::new()
-        .fill(theme::mix(cx.accent, CARD, 0.82))
+        .fill(theme::mix(cx.accent, pal().card, 0.82))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::symmetric(14, 8))
         .show(ui, |ui| {
@@ -557,20 +564,20 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
                 );
                 match &update.status {
                     UpdateStatus::Downloading(done) => {
-                        ui.label(format!("Downloading Sumo {version}…"));
+                        ui.label(format!("Downloading Sumo {shown}…"));
                         ui.add(egui::ProgressBar::new(*done).desired_width(160.0).show_percentage());
                     }
                     UpdateStatus::NeedsPassword { .. } => {
                         ui.label(format!(
-                            "Sumo {version} is downloaded. Enter your password to install it."
+                            "Sumo {shown} is downloaded. Enter your password to install it."
                         ));
                     }
                     UpdateStatus::Installing => {
                         ui.spinner();
-                        ui.label(format!("Installing Sumo {version}. It starts again in a moment."));
+                        ui.label(format!("Installing Sumo {shown}. It starts again in a moment."));
                     }
                     UpdateStatus::Installed => {
-                        ui.label(format!("Sumo {version} is installed. Start Sumo again to use it."));
+                        ui.label(format!("Sumo {shown} is installed. Start Sumo again to use it."));
                     }
                     UpdateStatus::Failed(why) => {
                         ui.label(egui::RichText::new(format!("The update didn't work: {why}")).color(DANGER));
@@ -582,16 +589,16 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
                         }
                     }
                     _ => {
-                        ui.label(egui::RichText::new(format!("Sumo {version} is available")).strong());
+                        ui.label(egui::RichText::new(format!("Sumo {shown} is available")).strong());
                         if crate::updater::can_install() {
                             if widgets::pill(ui, "Update now", cx.accent, theme::on_color(cx.accent)).clicked() {
                                 cx.actions.push(Action::Cmd(Command::InstallUpdate));
                             }
                         } else {
                             ui.label(
-                                egui::RichText::new("Update: git pull && makepkg -sif")
+                                egui::RichText::new("Update: cd sumo-music && git pull && makepkg -sif")
                                     .small()
-                                    .color(TEXT_DIM),
+                                    .color(pal().text_dim),
                             );
                         }
                         if ui.button("What's new").clicked() {
@@ -606,7 +613,7 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
                     if !matches!(
                         update.status,
                         UpdateStatus::Downloading(_) | UpdateStatus::NeedsPassword { .. } | UpdateStatus::Installing
-                    ) && widgets::icon_button(ui, icon::X, 13.0, TEXT_DIM, "Later").clicked()
+                    ) && widgets::icon_button(ui, icon::X, 13.0, pal().text_dim, "Later").clicked()
                     {
                         *dismissed = version.clone();
                     }
@@ -638,12 +645,12 @@ pub fn toolbar(ui: &mut Ui, cx: &mut Cx, can_back: bool, can_forward: bool, sear
             if enabled { Sense::click() } else { Sense::hover() },
         );
         let hovered = enabled && resp.hovered();
-        ui.painter().rect_filled(r, CornerRadius::same(10), CARD);
-        widgets::fade_fill(ui, resp.id, r, 10, hovered, HOVER);
+        ui.painter().rect_filled(r, CornerRadius::same(10), pal().card);
+        widgets::fade_fill(ui, resp.id, r, 10, hovered, pal().hover);
         let color = match (enabled, hovered) {
-            (false, _) => TEXT_FAINT,
+            (false, _) => pal().text_faint,
             (true, true) => TEXT,
-            (true, false) => TEXT_DIM,
+            (true, false) => pal().text_dim,
         };
         theme::paint_icon(ui.painter(), r.center(), glyph, theme::icon_font(15.0), color);
         if enabled
@@ -667,14 +674,18 @@ pub fn player_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
         .exact_size(76.0 + 2.0 * GAP)
         .resizable(false)
         .show_separator_line(false)
-        .frame(egui::Frame::new().fill(WINDOW_BG).inner_margin(Margin::same(GAP as i8)))
+        .frame(
+            egui::Frame::new()
+                .fill(pal().window_bg)
+                .inner_margin(Margin::same(GAP as i8)),
+        )
         .show(ui, |ui| {
             let dock = ui.max_rect();
             ui.painter().rect(
                 dock,
                 CornerRadius::same(18),
-                CARD,
-                Stroke::new(1.0, Color32::from_rgb(0x2a, 0x2a, 0x30)),
+                pal().card,
+                Stroke::new(1.0, theme::mix(pal().hover, pal().selected, 0.35)),
                 egui::StrokeKind::Inside,
             );
             let compact = dock.width() < 900.0;
@@ -877,7 +888,7 @@ fn sleep_button(ui: &mut Ui, cx: &mut Cx, rect: Rect) {
             Some(Sleep::AfterSong(_)) => "Pauses after this song".to_string(),
             None => "Pause playback…".to_string(),
         };
-        ui.label(egui::RichText::new(status).small().color(TEXT_FAINT));
+        ui.label(egui::RichText::new(status).small().color(pal().text_faint));
         let mut pick = |ui: &mut Ui, label: &str, timer: Option<SleepTimer>| {
             if ui.button(label).clicked() {
                 cx.actions.push(Action::Cmd(Command::SetSleep(timer)));
@@ -908,6 +919,201 @@ fn sleep_button(ui: &mut Ui, cx: &mut Cx, rect: Rect) {
     }
 }
 
+/// "Sumo's Halloween theme is on": `Some(true)` for Turn off, `Some(false)` for OK, `None`
+/// while it's still showing.
+pub fn holiday_notice(ui: &mut Ui, cx: &mut Cx, h: &super::themes::Holiday) -> Option<bool> {
+    let mut answer = None;
+    egui::Frame::new()
+        .fill(theme::mix(cx.accent, pal().card, 0.82))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::symmetric(14, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                theme::paint_icon(
+                    ui.painter(),
+                    ui.cursor().min + vec2(9.0, 10.0),
+                    h.glyph,
+                    theme::fill_icon_font(17.0),
+                    cx.accent,
+                );
+                ui.add_space(24.0);
+                ui.label(format!(
+                    "Sumo's {} theme is on. Change it from Themes in the sidebar.",
+                    h.name
+                ));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button("OK").clicked() {
+                        answer = Some(false);
+                    }
+                    if ui.button("Turn off").clicked() {
+                        answer = Some(true);
+                    }
+                });
+            });
+        });
+    ui.add_space(8.0);
+    answer
+}
+
+/// "Themes" above Settings: the color themes and the holiday themes in a menu that stays
+/// open while you try them. While a holiday is on, it shows the holiday's drawing.
+fn themes_button(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
+    let w = ui.available_width() - 4.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+    let hovered = resp.hovered();
+    widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().card);
+    let color = if hovered { TEXT } else { pal().text_dim };
+    let icon_x = if collapsed { rect.center().x } else { rect.left() + 20.0 };
+    let center = Pos2::new(icon_x, rect.center().y);
+    match cx.holiday {
+        Some(h) => {
+            // The holiday's drawing in a small round chip of its colour.
+            ui.painter()
+                .circle_filled(center, 12.0, theme::with_alpha(cx.accent, 46));
+            theme::paint_icon(ui.painter(), center, h.glyph, theme::fill_icon_font(15.0), cx.accent);
+        }
+        None => {
+            theme::paint_icon(ui.painter(), center, icon::PALETTE, theme::icon_font(18.0), color);
+        }
+    }
+    if !collapsed {
+        ui.painter().text(
+            Pos2::new(rect.left() + 40.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            "Themes",
+            theme::font(14.0),
+            color,
+        );
+    }
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+    let resp = if collapsed { resp.on_hover_text("Themes") } else { resp };
+    egui::Popup::menu(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_width(300.0);
+            theme_choices(ui, cx);
+            ui.add_space(6.0);
+            if ui.button(theme::ic(icon::GEAR, "More in Settings")).clicked() {
+                cx.actions.push(Action::Go(View::Settings));
+                ui.close();
+            }
+        });
+}
+
+/// The color themes (little drawings of the window in each), the holiday choice and the
+/// animation switch. In the Themes menu and in Settings.
+pub fn theme_choices(ui: &mut Ui, cx: &mut Cx) {
+    use super::themes::{HOLIDAYS, THEMES};
+    ui.label(egui::RichText::new("Colors").small().color(pal().text_faint));
+    let tile = vec2(64.0, 46.0);
+    for row in THEMES.chunks(4) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            for t in row {
+                let (rect, resp) = ui.allocate_exact_size(vec2(tile.x, tile.y + 18.0), Sense::click());
+                let art = Rect::from_min_size(rect.min, tile);
+                let p = ui.painter();
+                let on = cx.theme == t.id;
+                p.rect_filled(art, CornerRadius::same(8), t.palette.window_bg);
+                // The sidebar's selected entry in the accent, and the page with two panels.
+                p.rect_filled(
+                    Rect::from_min_size(art.min + vec2(5.0, 9.0), vec2(14.0, 3.0)),
+                    CornerRadius::same(1),
+                    t.accent,
+                );
+                let page = Rect::from_min_max(art.min + vec2(23.0, 5.0), art.max - vec2(4.0, 4.0));
+                p.rect_filled(page, CornerRadius::same(5), t.palette.panel);
+                p.rect_filled(
+                    Rect::from_min_size(page.min + vec2(4.0, 5.0), vec2(page.width() - 8.0, 9.0)),
+                    CornerRadius::same(3),
+                    t.palette.card,
+                );
+                p.rect_filled(
+                    Rect::from_min_size(page.min + vec2(4.0, 18.0), vec2(page.width() * 0.55, 4.0)),
+                    CornerRadius::same(2),
+                    t.palette.selected,
+                );
+                let ring = if on {
+                    Stroke::new(2.0, TEXT)
+                } else if resp.hovered() {
+                    Stroke::new(1.0, pal().text_dim)
+                } else {
+                    Stroke::new(1.0, theme::with_alpha(Color32::WHITE, 20))
+                };
+                p.rect_stroke(art, CornerRadius::same(8), ring, egui::StrokeKind::Outside);
+                p.text(
+                    Pos2::new(art.center().x, art.bottom() + 9.0),
+                    Align2::CENTER_CENTER,
+                    t.name,
+                    theme::font(11.5),
+                    if on { TEXT } else { pal().text_dim },
+                );
+                if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                    cx.actions.push(Action::SetTheme(t.id.to_string()));
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("Holiday themes").small().color(pal().text_faint));
+    let pick = |ui: &mut Ui, cx: &mut Cx, value: &str, label: String| {
+        if ui
+            .add(egui::Button::selectable(cx.holiday_setting == value, label))
+            .clicked()
+        {
+            cx.actions.push(Action::SetHoliday(value.to_string()));
+        }
+    };
+    egui::Grid::new("holiday-choices")
+        .num_columns(2)
+        .spacing([6.0, 4.0])
+        .min_col_width(140.0)
+        .show(ui, |ui| {
+            let by_date = match (cx.holiday_setting, cx.holiday) {
+                ("auto", Some(h)) => format!("By the date: {}", h.name),
+                _ => "By the date".to_string(),
+            };
+            pick(ui, cx, "auto", by_date);
+            pick(ui, cx, "off", "Off".into());
+            ui.end_row();
+            for pair in HOLIDAYS.chunks(2) {
+                for h in pair {
+                    pick(ui, cx, h.id, format!("Always {}", h.name));
+                }
+                ui.end_row();
+            }
+        });
+    let mut effects = cx.holiday_effects;
+    let label = match cx.holiday {
+        Some(h) => format!("Animation: {}", effect_name(h.effect)),
+        None => "Holiday animations".to_string(),
+    };
+    if ui.checkbox(&mut effects, label).changed() {
+        cx.actions.push(Action::SetHolidayEffects(effects));
+    }
+    if cx.holiday.is_some() {
+        ui.label(
+            egui::RichText::new("While a holiday theme is on, its color is used instead of your accent.")
+                .small()
+                .color(pal().text_faint),
+        );
+    }
+}
+
+fn effect_name(e: super::themes::Effect) -> &'static str {
+    use super::themes::Effect;
+    match e {
+        Effect::Fireworks => "fireworks",
+        Effect::Hearts => "hearts",
+        Effect::Petals => "petals",
+        Effect::Fireflies => "fireflies",
+        Effect::Bats => "bats",
+        Effect::Snow => "snow",
+    }
+}
+
 /// The next control slot of width `w`, going left from `rx`.
 fn take_slot(rx: &mut f32, cy: f32, w: f32) -> Rect {
     let r = Rect::from_min_max(Pos2::new(*rx - w, cy - w / 2.0), Pos2::new(*rx, cy + w / 2.0));
@@ -932,12 +1138,12 @@ enum Look {
 fn dock_button(ui: &mut Ui, rect: Rect, glyph: &str, look: Look, accent: Color32, tooltip: &str) -> egui::Response {
     let resp = ui.interact(rect, Id::new(("dock", tooltip)), Sense::click());
     let hovered = resp.hovered();
-    widgets::fade_fill(ui, resp.id, rect, 10, hovered, HOVER);
+    widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().hover);
     let on = matches!(look, Look::Toggle(true) | Look::Like(true));
     let color = match (on, hovered) {
         (true, _) => accent,
         (false, true) => TEXT,
-        (false, false) => TEXT_DIM,
+        (false, false) => pal().text_dim,
     };
     // Phosphor's regular and fill variants share code points; the font picks the style.
     let font = if matches!(look, Look::Filled | Look::Like(true)) {
@@ -986,7 +1192,7 @@ fn now_playing(ui: &mut Ui, cx: &mut Cx, rect: Rect) {
             Align2::LEFT_CENTER,
             "Nothing playing",
             theme::font(13.0),
-            TEXT_FAINT,
+            pal().text_faint,
         );
         return;
     };
@@ -1027,7 +1233,7 @@ fn now_playing(ui: &mut Ui, cx: &mut Cx, rect: Rect) {
         Pos2::new(x, line_y),
         &t.artist,
         theme::font(12.5),
-        TEXT_DIM,
+        pal().text_dim,
         (w * 0.5).max(60.0),
     );
     if artist.clicked() {
@@ -1085,14 +1291,14 @@ fn now_playing(ui: &mut Ui, cx: &mut Cx, rect: Rect) {
         Align2::LEFT_CENTER,
         theme::fmt_time(shown),
         theme::font(11.0),
-        TEXT_DIM,
+        pal().text_dim,
     );
     ui.painter().text(
         Pos2::new(rect.right(), y),
         Align2::RIGHT_CENTER,
         if dur > 0.0 { theme::fmt_time(dur) } else { "-:--".into() },
         theme::font(11.0),
-        TEXT_DIM,
+        pal().text_dim,
     );
     let bar = Rect::from_min_max(
         Pos2::new(x + time_w, y - 8.0),
@@ -1117,7 +1323,7 @@ fn now_playing(ui: &mut Ui, cx: &mut Cx, rect: Rect) {
                 .layer_painter(egui::LayerId::new(egui::Order::Tooltip, id.with("hover")));
             let galley = painter.layout_no_wrap(text, theme::font(11.5), TEXT);
             let at = Rect::from_center_size(Pos2::new(pos.x, bar.top() - 14.0), galley.size() + vec2(12.0, 6.0));
-            painter.rect_filled(at, CornerRadius::same(6), CARD);
+            painter.rect_filled(at, CornerRadius::same(6), pal().card);
             painter.galley(at.center() - galley.size() / 2.0, galley, TEXT);
         }
         if resp.drag_stopped() || resp.clicked() {
@@ -1194,7 +1400,7 @@ pub fn right_overlay(ctx: &egui::Context, cx: &mut Cx, tab: RightTab, area: Rect
 /// The tabs (Playing, Lyrics, Queue) and what the chosen one shows.
 fn right_panel_body(ui: &mut Ui, cx: &mut Cx, tab: RightTab) {
     egui::Frame::new()
-        .fill(PANEL)
+        .fill(pal().panel)
         .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(Margin::same(16))
         .show(ui, |ui| {
@@ -1212,7 +1418,7 @@ fn right_panel_body(ui: &mut Ui, cx: &mut Cx, tab: RightTab) {
                     }
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::icon_button(ui, icon::X, 15.0, TEXT_DIM, "Close").clicked() {
+                    if widgets::icon_button(ui, icon::X, 15.0, pal().text_dim, "Close").clicked() {
                         cx.actions.push(Action::ToggleRightPanel);
                     }
                 });
@@ -1253,7 +1459,7 @@ fn now_playing_panel(ui: &mut Ui, cx: &mut Cx) {
                 row.min + vec2(0.0, 32.0),
                 &t.artist,
                 theme::font(15.0),
-                TEXT_DIM,
+                pal().text_dim,
                 text_w,
             );
             if artist.clicked() {
@@ -1268,7 +1474,7 @@ fn now_playing_panel(ui: &mut Ui, cx: &mut Cx) {
                 (
                     icon::HEART,
                     theme::icon_font(20.0),
-                    if hr.hovered() { TEXT } else { TEXT_DIM },
+                    if hr.hovered() { TEXT } else { pal().text_dim },
                 )
             };
             theme::paint_icon(ui.painter(), heart.center(), glyph, font, color);
@@ -1284,7 +1490,7 @@ fn now_playing_panel(ui: &mut Ui, cx: &mut Cx) {
             ui.horizontal(|ui| {
                 widgets::source_badge(ui, source);
                 if let Some(q) = &cx.player.quality {
-                    ui.label(egui::RichText::new(q.label()).size(12.0).color(TEXT_DIM));
+                    ui.label(egui::RichText::new(q.label()).size(12.0).color(pal().text_dim));
                 }
             });
             if let Some(q) = &cx.player.quality {
@@ -1302,8 +1508,10 @@ fn now_playing_panel(ui: &mut Ui, cx: &mut Cx) {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui
                                 .add(
-                                    egui::Label::new(egui::RichText::new("Open queue").size(13.0).color(TEXT_DIM))
-                                        .sense(Sense::click()),
+                                    egui::Label::new(
+                                        egui::RichText::new("Open queue").size(13.0).color(pal().text_dim),
+                                    )
+                                    .sense(Sense::click()),
                                 )
                                 .on_hover_cursor(CursorIcon::PointingHand)
                                 .clicked()
@@ -1330,7 +1538,7 @@ fn now_playing_panel(ui: &mut Ui, cx: &mut Cx) {
                 let pos_ms = (cx.player.position_now() * 1000.0) as u64;
                 let current = lyrics.line_at(pos_ms).unwrap_or(0);
                 let from = current.saturating_sub(1);
-                let fill = theme::mix(cx.tint, PANEL, 0.35);
+                let fill = theme::mix(cx.tint, pal().panel, 0.35);
                 // Spotify-style: the current line in white, the others darker than the card.
                 let dim = if theme::on_color(fill) == Color32::WHITE {
                     theme::with_alpha(Color32::WHITE, 110)
@@ -1386,7 +1594,7 @@ pub fn lyrics(ui: &mut Ui, cx: &mut Cx, big: bool) {
         ui.add_space(20.0);
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(egui::RichText::new("Looking for lyrics…").color(TEXT_DIM));
+            ui.label(egui::RichText::new("Looking for lyrics…").color(pal().text_dim));
         });
         return;
     }
@@ -1406,12 +1614,12 @@ pub fn lyrics(ui: &mut Ui, cx: &mut Cx, big: bool) {
             .id_salt(id)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("Unsynced lyrics").small().color(TEXT_FAINT));
+                ui.label(egui::RichText::new("Unsynced lyrics").small().color(pal().text_faint));
                 ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new(&lyrics.plain)
                         .font(theme::bold_font(size * 0.8))
-                        .color(TEXT_DIM),
+                        .color(pal().text_dim),
                 );
                 provider(ui, &lyrics.provider);
             });
@@ -1443,8 +1651,8 @@ pub fn lyrics(ui: &mut Ui, cx: &mut Cx, big: bool) {
                 };
                 let color = match state {
                     0 => Color32::WHITE,
-                    -1 => theme::with_alpha(TEXT_DIM, if big { 150 } else { 170 }),
-                    _ => theme::with_alpha(TEXT_FAINT, if big { 200 } else { 255 }),
+                    -1 => theme::with_alpha(pal().text_dim, if big { 150 } else { 170 }),
+                    _ => theme::with_alpha(pal().text_faint, if big { 200 } else { 255 }),
                 };
                 let text = if line.text.trim().is_empty() {
                     "♪"
@@ -1462,7 +1670,7 @@ pub fn lyrics(ui: &mut Ui, cx: &mut Cx, big: bool) {
                         Align2::LEFT_BOTTOM,
                         theme::fmt_time(line.time_ms as f64 / 1000.0),
                         theme::font(10.0),
-                        TEXT_FAINT,
+                        pal().text_faint,
                     );
                 }
                 if resp.hovered() {
@@ -1491,7 +1699,7 @@ fn provider(ui: &mut Ui, name: &str) {
         ui.label(
             egui::RichText::new(format!("Lyrics from {name}"))
                 .size(11.0)
-                .color(TEXT_FAINT),
+                .color(pal().text_faint),
         );
     }
 }
@@ -1513,7 +1721,7 @@ fn download_control(ui: &mut Ui, cx: &mut Cx, t: &Track, rect: Rect) {
             // Progress ring around a small arrow.
             let radius = 10.0;
             let painter = ui.painter();
-            painter.circle_stroke(center, radius, Stroke::new(2.0, HOVER));
+            painter.circle_stroke(center, radius, Stroke::new(2.0, pal().hover));
             if p > 0.0 {
                 let n = 40;
                 let points: Vec<Pos2> = (0..=n)
@@ -1529,11 +1737,11 @@ fn download_control(ui: &mut Ui, cx: &mut Cx, t: &Track, rect: Rect) {
             } else {
                 "Waiting to download…".to_string()
             };
-            (icon::ARROW_DOWN, TEXT_DIM, tip)
+            (icon::ARROW_DOWN, pal().text_dim, tip)
         }
         widgets::Downloaded::No => (
             icon::DOWNLOAD_SIMPLE,
-            if hovered { TEXT } else { TEXT_DIM },
+            if hovered { TEXT } else { pal().text_dim },
             "Download".to_string(),
         ),
     };
@@ -1567,10 +1775,10 @@ pub fn empty_state(ui: &mut Ui, glyph: &str, text: &str) {
             egui::RichText::new(glyph)
                 .family(theme::icons())
                 .size(42.0)
-                .color(TEXT_FAINT),
+                .color(pal().text_faint),
         );
         ui.add_space(8.0);
-        ui.label(egui::RichText::new(text).color(TEXT_DIM));
+        ui.label(egui::RichText::new(text).color(pal().text_dim));
     });
 }
 
@@ -1579,7 +1787,7 @@ fn queue(ui: &mut Ui, cx: &mut Cx) {
         ui.label(
             egui::RichText::new("Now playing")
                 .font(theme::bold_font(13.0))
-                .color(TEXT_DIM),
+                .color(pal().text_dim),
         );
         ui.add_space(4.0);
         queue_row(ui, cx, &t, None, true);
@@ -1609,7 +1817,12 @@ fn queue(ui: &mut Ui, cx: &mut Cx) {
             if range.is_empty() {
                 continue;
             }
-            let count = range.len();
+            // The list part may go on past the 200 songs shown.
+            let count = if range.start == queued {
+                cx.player.upcoming_len.saturating_sub(queued).max(range.len())
+            } else {
+                range.len()
+            };
             queue_part_header(ui, cx, &title, count, clear);
             for i in range {
                 let t = cx.player.upcoming[i].clone();
@@ -1627,7 +1840,11 @@ fn queue_part_header(ui: &mut Ui, cx: &mut Cx, title: &str, count: usize, clear:
     let confirm_id = Id::new(("queue-clear", title.starts_with("Queued")));
     let asking: bool = ui.data(|d| d.get_temp(confirm_id)).unwrap_or(false);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).font(theme::bold_font(13.0)).color(TEXT_DIM));
+        ui.label(
+            egui::RichText::new(title)
+                .font(theme::bold_font(13.0))
+                .color(pal().text_dim),
+        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let link = |ui: &mut Ui, text: &str, color: Color32| {
                 ui.add(egui::Label::new(egui::RichText::new(text).small().color(color)).sense(Sense::click()))
@@ -1635,14 +1852,14 @@ fn queue_part_header(ui: &mut Ui, cx: &mut Cx, title: &str, count: usize, clear:
                     .clicked()
             };
             if asking {
-                if link(ui, "Keep", TEXT_DIM) {
+                if link(ui, "Keep", pal().text_dim) {
                     ui.data_mut(|d| d.insert_temp(confirm_id, false));
                 }
                 if link(ui, &format!("Remove {count}?"), theme::DANGER) {
                     ui.data_mut(|d| d.insert_temp(confirm_id, false));
                     cx.actions.push(Action::Cmd(clear));
                 }
-            } else if link(ui, "Clear", TEXT_FAINT) {
+            } else if link(ui, "Clear", pal().text_faint) {
                 ui.data_mut(|d| d.insert_temp(confirm_id, true));
             }
         });
@@ -1652,12 +1869,12 @@ fn queue_part_header(ui: &mut Ui, cx: &mut Cx, title: &str, count: usize, clear:
 
 /// Dragging a queue row moves it within its part (shown with a line where it will go).
 fn queue_drag(ui: &mut Ui, cx: &mut Cx, drag_id: Id, rows: &[(usize, Rect)], queued: usize) {
-    let Some(from) = ui.data(|d| d.get_temp::<usize>(drag_id)) else {
+    let Some((from, id)) = ui.data(|d| d.get_temp::<(usize, String)>(drag_id)) else {
         return;
     };
     // A drag that ended elsewhere (the panel was closed meanwhile) is over.
     if !ui.input(|i| i.pointer.any_down() || i.pointer.any_released()) {
-        ui.data_mut(|d| d.remove::<usize>(drag_id));
+        ui.data_mut(|d| d.remove::<(usize, String)>(drag_id));
         return;
     }
     let Some(pointer) = ui.ctx().pointer_interact_pos() else {
@@ -1678,15 +1895,9 @@ fn queue_drag(ui: &mut Ui, cx: &mut Cx, drag_id: Id, rows: &[(usize, Rect)], que
     let y = if to > from { rect.bottom() } else { rect.top() };
     ui.painter().hline(rect.x_range(), y, Stroke::new(2.0, cx.accent));
     if ui.input(|i| i.pointer.any_released()) {
-        ui.data_mut(|d| d.remove::<usize>(drag_id));
+        ui.data_mut(|d| d.remove::<(usize, String)>(drag_id));
         if to != from {
-            if let Some(t) = cx.player.upcoming.get(from) {
-                cx.actions.push(Action::Cmd(Command::MoveUpcoming {
-                    from,
-                    to,
-                    id: t.id.clone(),
-                }));
-            }
+            cx.actions.push(Action::Cmd(Command::MoveUpcoming { from, to, id }));
         }
     }
 }
@@ -1699,12 +1910,13 @@ fn queue_row(ui: &mut Ui, cx: &mut Cx, t: &crate::model::Track, index: Option<us
     };
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), sense);
     if let (Some(i), true) = (index, resp.drag_started()) {
-        ui.data_mut(|d| d.insert_temp(Id::new("queue-drag"), i));
+        // The id too: the queue can move on before the song is dropped.
+        ui.data_mut(|d| d.insert_temp(Id::new("queue-drag"), (i, t.id.clone())));
     }
     if resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     }
-    widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), HOVER);
+    widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), pal().hover);
     let art = Rect::from_min_size(rect.min + vec2(4.0, 6.0), vec2(40.0, 40.0));
     let src = t.art.clone().or_else(|| {
         if current {
@@ -1729,7 +1941,7 @@ fn queue_row(ui: &mut Ui, cx: &mut Cx, t: &crate::model::Track, index: Option<us
         Pos2::new(x, rect.top() + 28.0),
         &t.artist,
         theme::font(12.0),
-        TEXT_DIM,
+        pal().text_dim,
         w,
     );
     if let Some(i) = index {
@@ -1741,7 +1953,7 @@ fn queue_row(ui: &mut Ui, cx: &mut Cx, t: &crate::model::Track, index: Option<us
                 Align2::CENTER_CENTER,
                 icon::X,
                 theme::icon_font(14.0),
-                if xr.hovered() { TEXT } else { TEXT_DIM },
+                if xr.hovered() { TEXT } else { pal().text_dim },
             );
         }
         if xr.clicked() {

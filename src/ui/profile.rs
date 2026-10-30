@@ -136,8 +136,11 @@ pub fn avatar(ui: &Ui, cx: &mut Cx, image: Option<&str>, name: &str, rect: Rect)
             .paint_at(ui, rect);
         return;
     }
-    ui.painter()
-        .circle_filled(rect.center(), rect.width() / 2.0, theme::mix(LASTFM_RED, CARD, 0.25));
+    ui.painter().circle_filled(
+        rect.center(),
+        rect.width() / 2.0,
+        theme::mix(LASTFM_RED, pal().card, 0.25),
+    );
     let letter: String = name
         .chars()
         .next()
@@ -197,8 +200,8 @@ fn header(ui: &mut Ui, cx: &mut Cx, name: &str, info: Option<&Fetch>) {
     widgets::rounded_gradient(
         ui,
         card,
-        theme::mix(tint, CARD, 0.55),
-        theme::mix(tint, CARD, 0.9),
+        theme::mix(tint, pal().card, 0.55),
+        theme::mix(tint, pal().card, 0.9),
         RADIUS + 4,
     );
     let pic = Rect::from_min_size(card.min + vec2(pad, pad), vec2(size, size));
@@ -263,7 +266,7 @@ fn header(ui: &mut Ui, cx: &mut Cx, name: &str, info: Option<&Fetch>) {
         Pos2::new(tx + 22.0, y),
         kind,
         theme::bold_font(11.5),
-        TEXT_DIM,
+        pal().text_dim,
         tw - 22.0,
     );
     y += 18.0 + 8.0;
@@ -275,7 +278,7 @@ fn header(ui: &mut Ui, cx: &mut Cx, name: &str, info: Option<&Fetch>) {
             Pos2::new(tx, y + 2.0),
             &details.join(" · "),
             theme::font(13.5),
-            TEXT_DIM,
+            pal().text_dim,
             tw,
         );
         y += details_h;
@@ -345,7 +348,7 @@ fn periods() -> Vec<(Period, &'static str)> {
 /// Spinner or error in place of a section that has nothing to show yet.
 fn waiting(ui: &mut Ui, f: Option<&Fetch>, height: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS), CARD);
+    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS), pal().card);
     match f.and_then(|f| f.error.as_deref()) {
         Some(error) => {
             ui.painter().text(
@@ -353,7 +356,7 @@ fn waiting(ui: &mut Ui, f: Option<&Fetch>, height: f32) {
                 Align2::CENTER_CENTER,
                 format!("Couldn't load this: {error}"),
                 theme::font(13.5),
-                TEXT_DIM,
+                pal().text_dim,
             );
         }
         None => {
@@ -363,7 +366,7 @@ fn waiting(ui: &mut Ui, f: Option<&Fetch>, height: f32) {
                 ui.painter().circle_filled(
                     rect.center() + vec2((k as f32 - 1.0) * 14.0, 0.0),
                     3.5,
-                    theme::with_alpha(TEXT_DIM, (80.0 + 150.0 * phase) as u8),
+                    theme::with_alpha(pal().text_dim, (80.0 + 150.0 * phase) as u8),
                 );
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
@@ -372,7 +375,7 @@ fn waiting(ui: &mut Ui, f: Option<&Fetch>, height: f32) {
 }
 
 fn subtitle(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).font(theme::font(13.0)).color(TEXT_DIM));
+    ui.label(RichText::new(text).font(theme::font(13.0)).color(pal().text_dim));
     ui.add_space(8.0);
 }
 
@@ -424,13 +427,13 @@ fn stat_tiles(ui: &mut Ui, tiles: &[(&str, String, &str)]) {
             ui.spacing_mut().item_spacing.x = gap;
             for (glyph, value, label) in row {
                 let (r, _) = ui.allocate_exact_size(vec2(tile_w, 88.0), Sense::hover());
-                ui.painter().rect_filled(r, CornerRadius::same(RADIUS), CARD);
+                ui.painter().rect_filled(r, CornerRadius::same(RADIUS), pal().card);
                 theme::paint_icon(
                     ui.painter(),
                     Pos2::new(r.right() - 24.0, r.top() + 24.0),
                     glyph,
                     theme::icon_font(18.0),
-                    TEXT_FAINT,
+                    pal().text_faint,
                 );
                 text_trunc(
                     ui,
@@ -445,7 +448,7 @@ fn stat_tiles(ui: &mut Ui, tiles: &[(&str, String, &str)]) {
                     Pos2::new(r.left() + 16.0, r.bottom() - 28.0),
                     label,
                     theme::font(13.0),
-                    TEXT_DIM,
+                    pal().text_dim,
                     tile_w - 32.0,
                 );
             }
@@ -477,7 +480,7 @@ fn chart(ui: &mut Ui, accent: Color32, bars: &[Bucket], per: &str) {
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 220.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::same(RADIUS), CARD);
+    p.rect_filled(rect, CornerRadius::same(RADIUS), pal().card);
     let total: u64 = bars.iter().map(|b| b.plays).sum();
     let max = bars.iter().map(|b| b.plays).max().unwrap_or(0).max(1);
     p.text(
@@ -494,18 +497,18 @@ fn chart(ui: &mut Ui, accent: Color32, bars: &[Bucket], per: &str) {
             Align2::RIGHT_TOP,
             format!("about {} {per}", thousands(avg.round() as u64)),
             theme::font(13.0),
-            TEXT_DIM,
+            pal().text_dim,
         );
     }
     let plot = Rect::from_min_max(rect.min + vec2(18.0, 52.0), rect.max - vec2(18.0, 30.0));
     // The busiest bar's height, as a guide line.
     p.line_segment(
         [plot.left_top(), plot.right_top()],
-        egui::Stroke::new(1.0, theme::with_alpha(TEXT_FAINT, 60)),
+        egui::Stroke::new(1.0, theme::with_alpha(pal().text_faint, 60)),
     );
     p.line_segment(
         [plot.left_bottom(), plot.right_bottom()],
-        egui::Stroke::new(1.0, theme::with_alpha(TEXT_FAINT, 90)),
+        egui::Stroke::new(1.0, theme::with_alpha(pal().text_faint, 90)),
     );
     let n = bars.len().max(1);
     let slot = plot.width() / n as f32;
@@ -525,8 +528,8 @@ fn chart(ui: &mut Ui, accent: Color32, bars: &[Bucket], per: &str) {
         );
         let over = pointed == Some(i);
         let color = match (b.plays, pointed) {
-            (0, _) => theme::with_alpha(TEXT_FAINT, 70),
-            (_, Some(_)) if !over => theme::mix(accent, CARD, 0.55),
+            (0, _) => theme::with_alpha(pal().text_faint, 70),
+            (_, Some(_)) if !over => theme::mix(accent, pal().card, 0.55),
             _ => accent,
         };
         let r = (bar_w / 4.0).min(5.0) as u8;
@@ -547,7 +550,7 @@ fn chart(ui: &mut Ui, accent: Color32, bars: &[Bucket], per: &str) {
                 Align2::CENTER_TOP,
                 &b.label,
                 theme::font(11.5),
-                if over { TEXT } else { TEXT_FAINT },
+                if over { TEXT } else { pal().text_faint },
             );
         }
         if over {
@@ -564,7 +567,7 @@ fn chart(ui: &mut Ui, accent: Color32, bars: &[Bucket], per: &str) {
         let shift_x = (rect.left() + 6.0 - bubble.left()).max(0.0) + (rect.right() - 6.0 - bubble.right()).min(0.0);
         let shift_y = (rect.top() + 6.0 - bubble.top()).max(0.0);
         bubble = bubble.translate(vec2(shift_x, shift_y));
-        p.rect_filled(bubble, CornerRadius::same(8), SELECTED);
+        p.rect_filled(bubble, CornerRadius::same(8), pal().selected);
         p.galley(bubble.min + vec2(8.0, 5.0), galley, TEXT);
     }
 }
@@ -631,7 +634,7 @@ fn top_section(ui: &mut Ui, cx: &mut Cx, kind: TopKind, period: &mut Period) {
                     queue: false,
                 }));
             }
-            if widgets::pill(ui, "Add to queue", HOVER, TEXT).clicked() {
+            if widgets::pill(ui, "Add to queue", pal().hover, TEXT).clicked() {
                 cx.actions.push(Action::Cmd(Command::PlayNamed {
                     songs: named(),
                     context,
@@ -653,7 +656,7 @@ fn top_section(ui: &mut Ui, cx: &mut Cx, kind: TopKind, period: &mut Period) {
         };
         let resp = ui
             .add(
-                egui::Label::new(RichText::new(label).font(theme::bold_font(13.5)).color(TEXT_DIM))
+                egui::Label::new(RichText::new(label).font(theme::bold_font(13.5)).color(pal().text_dim))
                     .sense(Sense::click()),
             )
             .on_hover_cursor(CursorIcon::PointingHand);
@@ -719,7 +722,7 @@ fn tiles(ui: &mut Ui, cx: &mut Cx, kind: TopKind, items: &[TopItem]) {
         };
         let height = w + 54.0;
         let (rect, resp) = ui.allocate_exact_size(vec2(w, height), Sense::click());
-        widgets::fade_fill(ui, resp.id, rect.expand(8.0), RADIUS + 2, resp.hovered(), CARD);
+        widgets::fade_fill(ui, resp.id, rect.expand(8.0), RADIUS + 2, resp.hovered(), pal().card);
         let art_rect = Rect::from_min_size(rect.min, vec2(w, w));
         if kind == TopKind::Artists {
             widgets::cover_round(ui, cx.art, art.as_deref(), art_rect, widgets::artist_fallback());
@@ -752,7 +755,7 @@ fn tiles(ui: &mut Ui, cx: &mut Cx, kind: TopKind, items: &[TopItem]) {
             art_rect.left_bottom() + vec2(0.0, 28.0),
             &sub,
             theme::font(12.5),
-            TEXT_DIM,
+            pal().text_dim,
             w,
         );
         let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
@@ -783,13 +786,13 @@ fn track_rows(ui: &mut Ui, cx: &mut Cx, items: &[TopItem]) {
         let art = picture(cx, &item.artist, &item.name, item.image.as_deref());
         let w = ui.available_width();
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 56.0), Sense::click());
-        widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), CARD);
+        widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), pal().card);
         ui.painter().text(
             Pos2::new(rect.left() + 28.0, rect.center().y),
             Align2::RIGHT_CENTER,
             (i + 1).to_string(),
             theme::font(14.0),
-            TEXT_DIM,
+            pal().text_dim,
         );
         let art_rect = Rect::from_min_size(Pos2::new(rect.left() + 42.0, rect.top() + 8.0), vec2(40.0, 40.0));
         widgets::cover(
@@ -817,7 +820,7 @@ fn track_rows(ui: &mut Ui, cx: &mut Cx, items: &[TopItem]) {
             Pos2::new(text_x, rect.top() + 30.0),
             &item.artist,
             theme::font(12.5),
-            TEXT_DIM,
+            pal().text_dim,
             text_w,
         );
         if artist.clicked() {
@@ -829,7 +832,7 @@ fn track_rows(ui: &mut Ui, cx: &mut Cx, items: &[TopItem]) {
             vec2(bar_w, 6.0),
         );
         ui.painter()
-            .rect_filled(track, CornerRadius::same(3), theme::with_alpha(TEXT_FAINT, 50));
+            .rect_filled(track, CornerRadius::same(3), theme::with_alpha(pal().text_faint, 50));
         let filled = Rect::from_min_size(track.min, vec2(track.width() * item.plays as f32 / max as f32, 6.0));
         ui.painter().rect_filled(filled, CornerRadius::same(3), cx.accent);
         ui.painter().text(
@@ -837,7 +840,7 @@ fn track_rows(ui: &mut Ui, cx: &mut Cx, items: &[TopItem]) {
             Align2::RIGHT_BOTTOM,
             plays(item.plays),
             theme::font(12.5),
-            TEXT_DIM,
+            pal().text_dim,
         );
         let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
         if resp.clicked() && !artist.hovered() {
@@ -884,7 +887,7 @@ fn genres_section(ui: &mut Ui, cx: &mut Cx, period: &mut Period) {
             Pos2::new(row.right() - 56.0, row.center().y + 5.0),
         );
         ui.painter()
-            .rect_filled(track, CornerRadius::same(5), theme::with_alpha(TEXT_FAINT, 40));
+            .rect_filled(track, CornerRadius::same(5), theme::with_alpha(pal().text_faint, 40));
         let filled = Rect::from_min_size(
             track.min,
             vec2((track.width() * t.share / top).max(4.0), track.height()),
@@ -900,7 +903,7 @@ fn genres_section(ui: &mut Ui, cx: &mut Cx, period: &mut Period) {
             Align2::RIGHT_CENTER,
             format!("{:.0}%", t.share * 100.0),
             theme::font(13.0),
-            TEXT_DIM,
+            pal().text_dim,
         );
         if resp
             .on_hover_cursor(CursorIcon::PointingHand)
@@ -964,7 +967,7 @@ fn recent_section(ui: &mut Ui, cx: &mut Cx) {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(10), theme::with_alpha(cx.accent, 24));
         }
-        widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), CARD);
+        widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), pal().card);
         let art_rect = Rect::from_min_size(Pos2::new(rect.left() + 8.0, rect.top() + 8.0), vec2(40.0, 40.0));
         widgets::cover(
             ui,
@@ -980,7 +983,7 @@ fn recent_section(ui: &mut Ui, cx: &mut Cx) {
         };
         let when_w = ui
             .painter()
-            .layout_no_wrap(when.clone(), theme::font(12.5), TEXT_DIM)
+            .layout_no_wrap(when.clone(), theme::font(12.5), pal().text_dim)
             .size()
             .x;
         let right = rect.right() - 12.0;
@@ -1004,7 +1007,7 @@ fn recent_section(ui: &mut Ui, cx: &mut Cx) {
             Pos2::new(text_x, rect.top() + 30.0),
             &sub,
             theme::font(12.5),
-            TEXT_DIM,
+            pal().text_dim,
             text_w,
         );
         ui.painter().text(
@@ -1012,7 +1015,7 @@ fn recent_section(ui: &mut Ui, cx: &mut Cx) {
             Align2::RIGHT_CENTER,
             &when,
             theme::font(12.5),
-            if playing { cx.accent } else { TEXT_DIM },
+            if playing { cx.accent } else { pal().text_dim },
         );
         let mut x = right - when_w - 14.0;
         if playing {
@@ -1055,7 +1058,7 @@ fn recent_section(ui: &mut Ui, cx: &mut Cx) {
         };
         let resp = ui
             .add(
-                egui::Label::new(RichText::new(label).font(theme::bold_font(13.5)).color(TEXT_DIM))
+                egui::Label::new(RichText::new(label).font(theme::bold_font(13.5)).color(pal().text_dim))
                     .sense(Sense::click()),
             )
             .on_hover_cursor(CursorIcon::PointingHand);
@@ -1082,9 +1085,9 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
     if collapsed {
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 40.0), Sense::click());
         if on_profile {
-            ui.painter().rect_filled(rect, CornerRadius::same(10), SELECTED);
+            ui.painter().rect_filled(rect, CornerRadius::same(10), pal().selected);
         } else {
-            widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), CARD);
+            widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), pal().card);
         }
         let pic = Rect::from_center_size(rect.center(), vec2(28.0, 28.0));
         avatar(ui, cx, image.as_deref(), &name, pic);
@@ -1096,9 +1099,9 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
         }
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
         if on_settings {
-            ui.painter().rect_filled(rect, CornerRadius::same(10), SELECTED);
+            ui.painter().rect_filled(rect, CornerRadius::same(10), pal().selected);
         } else {
-            widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), CARD);
+            widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), pal().card);
         }
         theme::paint_icon(
             ui.painter(),
@@ -1109,7 +1112,11 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
             } else {
                 theme::icon_font(18.0)
             },
-            if on_settings || resp.hovered() { TEXT } else { TEXT_DIM },
+            if on_settings || resp.hovered() {
+                TEXT
+            } else {
+                pal().text_dim
+            },
         );
         if resp
             .on_hover_cursor(CursorIcon::PointingHand)
@@ -1127,15 +1134,15 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
         .interact(card, Id::new("sidebar-account"), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand);
     if on_profile {
-        ui.painter().rect_filled(card, CornerRadius::same(12), SELECTED);
+        ui.painter().rect_filled(card, CornerRadius::same(12), pal().selected);
     } else {
-        widgets::fade_fill(ui, resp.id, card, 12, resp.hovered(), CARD);
+        widgets::fade_fill(ui, resp.id, card, 12, resp.hovered(), pal().card);
     }
     let pic = Rect::from_min_size(Pos2::new(card.left() + 8.0, card.center().y - 17.0), vec2(34.0, 34.0));
     avatar(ui, cx, image.as_deref(), &name, pic);
     // A small Last.fm mark on the picture.
     let mark = Pos2::new(pic.right() - 2.0, pic.bottom() - 2.0);
-    ui.painter().circle_filled(mark, 7.5, WINDOW_BG);
+    ui.painter().circle_filled(mark, 7.5, pal().window_bg);
     ui.painter().circle_filled(mark, 6.0, LASTFM_RED);
     theme::paint_icon(
         ui.painter(),
@@ -1164,7 +1171,7 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
         Pos2::new(tx, card.center().y + 2.0),
         &sub,
         theme::font(12.0),
-        TEXT_DIM,
+        pal().text_dim,
         tw,
     );
     if resp.on_hover_text("Your Last.fm stats").clicked() {
@@ -1175,9 +1182,9 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text("Settings");
     if on_settings {
-        ui.painter().rect_filled(gear, CornerRadius::same(10), SELECTED);
+        ui.painter().rect_filled(gear, CornerRadius::same(10), pal().selected);
     } else {
-        widgets::fade_fill(ui, resp.id, gear, 10, resp.hovered(), CARD);
+        widgets::fade_fill(ui, resp.id, gear, 10, resp.hovered(), pal().card);
     }
     theme::paint_icon(
         ui.painter(),
@@ -1188,7 +1195,11 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
         } else {
             theme::icon_font(18.0)
         },
-        if on_settings || resp.hovered() { TEXT } else { TEXT_DIM },
+        if on_settings || resp.hovered() {
+            TEXT
+        } else {
+            pal().text_dim
+        },
     );
     if resp.clicked() {
         cx.actions.push(Action::Go(View::Settings));
@@ -1215,11 +1226,18 @@ pub fn home_card(ui: &mut Ui, cx: &mut Cx) {
     widgets::rounded_gradient(
         ui,
         rect,
-        theme::mix(tint, CARD, 0.7),
-        theme::mix(tint, CARD, 0.9),
+        theme::mix(tint, pal().card, 0.7),
+        theme::mix(tint, pal().card, 0.9),
         RADIUS,
     );
-    widgets::fade_fill(ui, resp.id, rect, RADIUS, resp.hovered(), theme::with_alpha(HOVER, 120));
+    widgets::fade_fill(
+        ui,
+        resp.id,
+        rect,
+        RADIUS,
+        resp.hovered(),
+        theme::with_alpha(pal().hover, 120),
+    );
     let pic = Rect::from_min_size(Pos2::new(rect.left() + 18.0, rect.center().y - 30.0), vec2(60.0, 60.0));
     avatar(ui, cx, image.as_deref(), &name, pic);
     let shown = user.map(|u| u.name.clone()).filter(|n| !n.is_empty()).unwrap_or(name);
@@ -1254,7 +1272,7 @@ pub fn home_card(ui: &mut Ui, cx: &mut Cx) {
         Pos2::new(tx, rect.center().y + 4.0),
         &line,
         theme::font(13.5),
-        TEXT_DIM,
+        pal().text_dim,
         tw,
     );
     let label = "See your stats";
@@ -1268,7 +1286,7 @@ pub fn home_card(ui: &mut Ui, cx: &mut Cx) {
         for a in faces.iter().rev() {
             let r = Rect::from_min_size(Pos2::new(x, rect.center().y - 15.0), vec2(30.0, 30.0));
             let art = picture(cx, &a.name, "", a.image.as_deref());
-            ui.painter().circle_filled(r.center(), 16.5, CARD);
+            ui.painter().circle_filled(r.center(), 16.5, pal().card);
             widgets::cover_round(ui, cx.art, art.as_deref(), r, widgets::artist_fallback());
             x -= 22.0;
         }

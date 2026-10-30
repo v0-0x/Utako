@@ -96,8 +96,12 @@ fn heading_with_link(ui: &mut Ui, text: &str, link: &str) -> bool {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             clicked = ui
                 .add(
-                    egui::Label::new(egui::RichText::new(link).font(theme::bold_font(14.0)).color(TEXT_DIM))
-                        .sense(Sense::click()),
+                    egui::Label::new(
+                        egui::RichText::new(link)
+                            .font(theme::bold_font(14.0))
+                            .color(pal().text_dim),
+                    )
+                    .sense(Sense::click()),
                 )
                 .on_hover_cursor(CursorIcon::PointingHand)
                 .clicked();
@@ -194,7 +198,7 @@ fn album_grid(ui: &mut Ui, cx: &mut Cx, albums: &[LibAlbum]) {
                 a.art(),
                 r,
                 6,
-                (theme::mix(source_color(source), PANEL, 0.4), icon::VINYL_RECORD),
+                (theme::mix(source_color(source), pal().panel, 0.4), icon::VINYL_RECORD),
             );
             if source != Source::Local {
                 source_corner(ui, r, source);
@@ -258,7 +262,7 @@ fn collection_row(ui: &mut Ui, cx: &mut Cx, title: &str, hits: &[CollectionHit])
                 h.image.as_deref(),
                 r,
                 6,
-                (theme::mix(source_color(h.source), PANEL, 0.4), glyph),
+                (theme::mix(source_color(h.source), pal().panel, 0.4), glyph),
             );
             source_corner(ui, r, h.source);
         });
@@ -376,8 +380,11 @@ fn list_header(
     let art_size = if w > 700.0 { 184.0 } else { 128.0 };
     let pad = 24.0;
     let (card, _) = ui.allocate_exact_size(vec2(w, art_size + 2.0 * pad), Sense::hover());
-    ui.painter()
-        .rect_filled(card, CornerRadius::same(RADIUS + 4), theme::mix(h.tint, CARD, 0.8));
+    ui.painter().rect_filled(
+        card,
+        CornerRadius::same(RADIUS + 4),
+        theme::mix(h.tint, pal().card, 0.8),
+    );
     let art = Rect::from_min_size(card.min + vec2(pad, pad), vec2(art_size, art_size));
     let art_radius = if h.round { (art_size / 2.0) as u8 } else { 12 };
     // The cover glows in its own colour.
@@ -400,7 +407,14 @@ fn list_header(
     let mut y = card.center().y - block / 2.0;
     let mut kind_x = tx;
     let kind = h.kind.to_uppercase();
-    let used = text_trunc(ui, Pos2::new(kind_x, y), &kind, theme::bold_font(11.5), TEXT_DIM, tw);
+    let used = text_trunc(
+        ui,
+        Pos2::new(kind_x, y),
+        &kind,
+        theme::bold_font(11.5),
+        pal().text_dim,
+        tw,
+    );
     kind_x = used.right() + 10.0;
     if let Some(src) = h.source {
         theme::paint_icon(
@@ -428,7 +442,7 @@ fn list_header(
             Pos2::new(tx, y + 2.0),
             h.description,
             theme::font(13.5),
-            TEXT_DIM,
+            pal().text_dim,
             tw,
         );
         y += desc_h;

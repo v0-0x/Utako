@@ -367,7 +367,17 @@ impl Service {
         let ev = self.spotify_tx.clone();
         let tx = self.internal_tx.clone();
         tokio::spawn(async move {
-            let r = SpotifyEngine::connect(&auth, &dir, cache, &cfg, vol, ev).await;
+            // After a network change (a VPN switched on or off) a connect can hang for good,
+            // and while it does no other connect starts: give up on it instead.
+            let r = match tokio::time::timeout(
+                SPOTIFY_CONNECT_TIMEOUT,
+                SpotifyEngine::connect(&auth, &dir, cache, &cfg, vol, ev),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => Err(anyhow::anyhow!("Spotify didn't answer; check your connection")),
+            };
             let _ = tx.send(Internal::SpotifyReady(r));
         });
     }

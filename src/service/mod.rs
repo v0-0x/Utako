@@ -239,6 +239,8 @@ pub struct PlayerView {
     pub repeat: RepeatMode,
     pub upcoming: Vec<Track>,
     pub up_next_len: usize,
+    /// All songs still to come (`upcoming` shows the first 200).
+    pub upcoming_len: usize,
     pub context: String,
     /// First song of the list playback started from (tells lists with the same name apart).
     pub context_first: Option<String>,
@@ -261,6 +263,7 @@ impl Default for PlayerView {
             repeat: RepeatMode::Off,
             upcoming: Vec::new(),
             up_next_len: 0,
+            upcoming_len: 0,
             context: String::new(),
             context_first: None,
             quality: None,
@@ -560,6 +563,8 @@ enum Internal {
         lyrics: Option<Lyrics>,
     },
     SearchResults {
+        /// Which search it answers: an older one with the same text is ignored too.
+        seq: u64,
         query: String,
         source: Source,
         tracks: Result<Vec<Track>>,
@@ -606,6 +611,11 @@ enum Internal {
     /// Status text while the Spotify library syncs.
     SyncProgress(String),
 }
+
+/// How long a Spotify connect may take before it counts as failed.
+const SPOTIFY_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a song may take to start before its connection counts as dead.
+const LOAD_STALL: Duration = Duration::from_secs(15);
 
 /// Plays kept in the listening history (for Recently played and Most played).
 const MAX_PLAYS: usize = 200_000;
@@ -766,6 +776,10 @@ pub struct Service {
     spotify_pending_page: Option<String>,
     /// A Spotify song waiting for the connection (load number, song, start position).
     spotify_pending_play: Option<(u64, Track, f64)>,
+    /// Bumped by every search.
+    search_seq: u64,
+    /// The load waited on (its number) and since when, to notice one that never starts.
+    loading_since: Option<(u64, Instant)>,
     /// The load that was a retry after a stream broke off (only one retry per song).
     retried_load: u64,
     /// Recently loaded pages, so going back doesn't reload them.
@@ -910,6 +924,8 @@ impl Service {
             spotify_api: Arc::new(SpotifyApi::new(http)),
             spotify_pending_page: None,
             spotify_pending_play: None,
+            search_seq: 0,
+            loading_since: None,
             retried_load: 0,
             page_cache: Vec::new(),
             apple_dev_token: Arc::new(tokio::sync::Mutex::new(None)),
@@ -1940,6 +1956,7 @@ impl Service {
                 self.shared.repaint();
             }
             Internal::SearchResults {
+                seq,
                 query,
                 source,
                 tracks,
@@ -1949,7 +1966,7 @@ impl Service {
             } => {
                 let mut feed = self.shared.feed.write().unwrap();
                 let search = &mut feed.search;
-                if search.query == query {
+                if search.query == query && seq == self.search_seq {
                     match (source, tracks) {
                         (Source::Spotify, Ok(t)) => search.spotify = t,
                         (_, Ok(t)) => search.soundcloud = t,

@@ -138,7 +138,7 @@ pub fn artist_fallback() -> (Color32, &'static str) {
 }
 
 pub fn track_fallback(t: &Track) -> (Color32, &'static str) {
-    (theme::mix(source_color(t.source), PANEL, 0.4), icon::MUSIC_NOTE)
+    (theme::mix(source_color(t.source), pal().panel, 0.4), icon::MUSIC_NOTE)
 }
 
 pub fn playlist_fallback(p: &Playlist) -> (Color32, &'static str) {
@@ -216,7 +216,7 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, options: &[(T, &str)], select
         .collect();
     let total: f32 = widths.iter().sum::<f32>() + 6.0;
     let (rect, _) = ui.allocate_exact_size(vec2(total, 34.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), CARD);
+    ui.painter().rect_filled(rect, CornerRadius::same(10), pal().card);
     let mut x = rect.left() + 3.0;
     let mut clicked = None;
     for ((value, label), w) in options.iter().zip(widths) {
@@ -226,16 +226,16 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, options: &[(T, &str)], select
             .on_hover_cursor(CursorIcon::PointingHand);
         let active = *value == selected;
         if active {
-            ui.painter().rect_filled(seg, CornerRadius::same(8), SELECTED);
+            ui.painter().rect_filled(seg, CornerRadius::same(8), pal().selected);
         } else {
-            fade_fill(ui, resp.id, seg, 8, resp.hovered(), HOVER);
+            fade_fill(ui, resp.id, seg, 8, resp.hovered(), pal().hover);
         }
         ui.painter().text(
             seg.center(),
             Align2::CENTER_CENTER,
             *label,
             font.clone(),
-            if active || resp.hovered() { TEXT } else { TEXT_DIM },
+            if active || resp.hovered() { TEXT } else { pal().text_dim },
         );
         if resp.clicked() {
             clicked = Some(*value);
@@ -256,8 +256,8 @@ pub fn action_button(ui: &mut Ui, glyph: &str, label: &str, primary: bool, accen
     let fill = match (primary, hovered) {
         (true, false) => accent,
         (true, true) => theme::mix(accent, Color32::WHITE, 0.15),
-        (false, false) => CARD,
-        (false, true) => HOVER,
+        (false, false) => pal().card,
+        (false, true) => pal().hover,
     };
     ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
     let font = if primary {
@@ -335,7 +335,7 @@ pub fn download_button(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], size: f32) {
             (n, 0) => format!("Download {n} songs"),
             (n, d) => format!("Download the other {} songs ({d} of {n} saved)", n - d),
         };
-        (icon::DOWNLOAD_SIMPLE, TEXT_DIM, tip)
+        (icon::DOWNLOAD_SIMPLE, pal().text_dim, tip)
     };
     if icon_button(ui, glyph, size, color, &tip).clicked() {
         if done == total || busy > 0 {
@@ -409,7 +409,7 @@ pub fn bar(ui: &mut Ui, id: Id, width: f32, fraction: f32, accent: Color32) -> (
         }
     }
     let painter = ui.painter();
-    painter.rect_filled(track, CornerRadius::same(2), Color32::from_rgb(0x4d, 0x4d, 0x4d));
+    painter.rect_filled(track, CornerRadius::same(2), theme::mix(pal().selected, TEXT, 0.12));
     let filled = Rect::from_min_max(track.min, Pos2::new(track.left() + track.width() * f, track.max.y));
     painter.rect_filled(filled, CornerRadius::same(2), if active { accent } else { TEXT });
     if active {
@@ -452,7 +452,7 @@ pub fn tile(
     let height = width + 58.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     let hovered = resp.hovered();
-    fade_fill(ui, resp.id, rect.expand(8.0), RADIUS + 2, hovered, CARD);
+    fade_fill(ui, resp.id, rect.expand(8.0), RADIUS + 2, hovered, pal().card);
     let art_rect = Rect::from_min_size(rect.min, vec2(width, width));
     draw_art(ui, art_rect);
     text_trunc(
@@ -468,7 +468,7 @@ pub fn tile(
         art_rect.left_bottom() + vec2(0.0, 28.0),
         subtitle,
         theme::font(12.5),
-        TEXT_DIM,
+        pal().text_dim,
         width,
     );
 
@@ -621,7 +621,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
             .on_hover_cursor(CursorIcon::PointingHand)
             .on_hover_text("Sort");
         let (glyph, font, color) = match (sort.by, sort.desc) {
-            (SortBy::Custom, _) if !menu.hovered() => ("#", f.clone(), TEXT_FAINT),
+            (SortBy::Custom, _) if !menu.hovered() => ("#", f.clone(), pal().text_faint),
             (SortBy::Custom, _) => (icon::SORT_ASCENDING, theme::icon_font(14.0), TEXT),
             (_, false) => (icon::SORT_ASCENDING, theme::icon_font(14.0), cx.accent),
             (_, true) => (icon::SORT_DESCENDING, theme::icon_font(14.0), cx.accent),
@@ -630,7 +630,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
             .text(num_rect.center(), Align2::CENTER_CENTER, glyph, font, color);
         egui::Popup::menu(&menu).show(|ui| {
             ui.set_min_width(190.0);
-            ui.label(egui::RichText::new("Sort by").small().color(TEXT_FAINT));
+            ui.label(egui::RichText::new("Sort by").small().color(pal().text_faint));
             for by in SortBy::ALL {
                 let on = sort.by == by;
                 let mut button = egui::Button::selectable(on, by.label());
@@ -694,7 +694,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
                 Align2::RIGHT_CENTER,
                 format!("{picked} selected · Ctrl+C to copy"),
                 f.clone(),
-                TEXT_DIM,
+                pal().text_dim,
             );
         }
         let duration = sort_heading(
@@ -756,7 +756,8 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
     } else {
         Sense::click()
     };
-    let dragging: Option<Vec<usize>> = ui.data(|d| d.get_temp(drag_id));
+    // The dragged songs: their rows and ids (the list can change during the drag).
+    let dragging: Option<Vec<(usize, String)>> = ui.data(|d| d.get_temp(drag_id));
 
     for i in first..last {
         let t = tracks[i];
@@ -769,22 +770,23 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
             } else {
                 vec![i]
             };
+            let rows: Vec<(usize, String)> = rows.into_iter().map(|r| (r, tracks[r].id.clone())).collect();
             ui.data_mut(|d| d.insert_temp(drag_id, rows));
         }
-        if dragging.as_ref().is_some_and(|rows| rows.contains(&i)) {
+        if dragging.as_ref().is_some_and(|rows| rows.iter().any(|r| r.0 == i)) {
             ui.painter()
                 .rect_filled(row, CornerRadius::same(10), theme::with_alpha(cx.accent, 24));
         }
         let is_current = current_id == Some(t.id.as_str());
         let hovered = ui.rect_contains_pointer(row) || resp.context_menu_opened();
         if selected[i - first] {
-            ui.painter().rect_filled(row, CornerRadius::same(10), SELECTED);
+            ui.painter().rect_filled(row, CornerRadius::same(10), pal().selected);
         } else {
             if is_current {
                 ui.painter()
                     .rect_filled(row, CornerRadius::same(10), theme::with_alpha(cx.accent, 14));
             }
-            fade_fill(ui, resp.id, row, 10, hovered, HOVER);
+            fade_fill(ui, resp.id, row, 10, hovered, pal().hover);
         }
 
         // Number / play icon / equalizer.
@@ -809,7 +811,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
                 Align2::CENTER_CENTER,
                 (i + 1).to_string(),
                 theme::font(13.0),
-                TEXT_DIM,
+                pal().text_dim,
             );
         }
 
@@ -832,7 +834,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
         if t.source != Source::Local {
             let mark = match downloaded(cx.feed, &t.id) {
                 Downloaded::Yes => Some(cx.accent),
-                Downloaded::Busy(_) => Some(TEXT_FAINT),
+                Downloaded::Busy(_) => Some(pal().text_faint),
                 Downloaded::No => None,
             };
             if let Some(color) = mark {
@@ -852,7 +854,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
             Pos2::new(artist_x, row.top() + 30.0),
             &t.artist,
             theme::font(12.5),
-            if hovered { TEXT } else { TEXT_DIM },
+            if hovered { TEXT } else { pal().text_dim },
             tw - (artist_x - tx),
         );
         if artist.clicked() {
@@ -864,7 +866,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
                 Pos2::new(row.left() + album_x, row.center().y - 8.0),
                 &t.album,
                 theme::font(13.0),
-                TEXT_DIM,
+                pal().text_dim,
                 width - album_x - dur_w - icons_w - 8.0,
             );
         }
@@ -889,7 +891,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
                 (
                     icon::HEART,
                     theme::icon_font(16.0),
-                    if heart.hovered() { TEXT } else { TEXT_DIM },
+                    if heart.hovered() { TEXT } else { pal().text_dim },
                 )
             };
             ui.painter()
@@ -908,7 +910,7 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
             Align2::RIGHT_CENTER,
             dur,
             theme::font(13.0),
-            TEXT_DIM,
+            pal().text_dim,
         );
 
         // Interactions.
@@ -1016,7 +1018,7 @@ fn sort_heading(
     let color = if desc.is_some() || resp.hovered() {
         TEXT
     } else {
-        TEXT_FAINT
+        pal().text_faint
     };
     let text_pos = Pos2::new(rect.left(), rect.center().y - galley.size().y / 2.0);
     ui.painter().galley(text_pos, galley, color);
@@ -1034,11 +1036,19 @@ fn sort_heading(
 
 /// Songs being dragged to another place in playlist `p`: a line shows where they'd land, and
 /// letting go moves them there. Near the top or bottom edge the list scrolls along.
-fn drag_rows(ui: &Ui, cx: &mut Cx, p: &Playlist, tracks: &[&Track], rows: Vec<usize>, rect: Rect, ids: (Id, Id)) {
+fn drag_rows(
+    ui: &Ui,
+    cx: &mut Cx,
+    p: &Playlist,
+    tracks: &[&Track],
+    rows: Vec<(usize, String)>,
+    rect: Rect,
+    ids: (Id, Id),
+) {
     let (drag_id, sel_id) = ids;
     // A drag that ended elsewhere (the view changed meanwhile) is over.
     if !ui.input(|i| i.pointer.any_down() || i.pointer.any_released()) {
-        ui.data_mut(|d| d.remove::<Vec<usize>>(drag_id));
+        ui.data_mut(|d| d.remove::<Vec<(usize, String)>>(drag_id));
         return;
     }
     let Some(pointer) = ui.ctx().pointer_interact_pos() else {
@@ -1065,17 +1075,17 @@ fn drag_rows(ui: &Ui, cx: &mut Cx, p: &Playlist, tracks: &[&Track], rows: Vec<us
     }
 
     if ui.input(|i| i.pointer.any_released()) {
-        ui.data_mut(|d| d.remove::<Vec<usize>>(drag_id));
+        ui.data_mut(|d| d.remove::<Vec<(usize, String)>>(drag_id));
         // Dropping a run of songs right before or after itself changes nothing.
-        let first = rows.iter().copied().min().unwrap_or(0);
-        let last = rows.iter().copied().max().unwrap_or(0);
+        let first = rows.iter().map(|r| r.0).min().unwrap_or(0);
+        let last = rows.iter().map(|r| r.0).max().unwrap_or(0);
         let run = last + 1 - first == rows.len();
         if rows.is_empty() || (run && (first..=last + 1).contains(&to)) {
             return;
         }
         cx.actions.push(Action::Cmd(Command::MovePlaylistTracks {
             playlist_id: p.id.clone(),
-            rows: rows.iter().map(|&i| (i, tracks[i].id.clone())).collect(),
+            rows,
             to,
         }));
         ui.data_mut(|d| d.get_temp_mut_or_default::<Selection>(sel_id).picked.clear());
@@ -1413,7 +1423,7 @@ fn selection_menu(
     ui.label(
         egui::RichText::new(format!("{count} selected"))
             .small()
-            .color(TEXT_FAINT),
+            .color(pal().text_faint),
     );
     if ui.button(theme::ic(icon::QUEUE, "Play next")).clicked() {
         cx.actions.push(Action::Cmd(Command::PlayNext(picked())));
@@ -1644,7 +1654,7 @@ pub fn track_menu(ui: &mut Ui, cx: &mut Cx, t: &Track, in_playlist: Option<(Opti
                 button = button.right_text(
                     egui::RichText::new(icon::CHECK)
                         .font(theme::icon_font(13.0))
-                        .color(TEXT_FAINT),
+                        .color(pal().text_faint),
                 );
             }
             if ui.add(button).clicked() {
@@ -1742,7 +1752,7 @@ pub fn track_menu(ui: &mut Ui, cx: &mut Cx, t: &Track, in_playlist: Option<(Opti
             ui.label(
                 egui::RichText::new("Plays via a local / Spotify / SoundCloud match")
                     .small()
-                    .color(TEXT_FAINT),
+                    .color(pal().text_faint),
             );
         }
     }
@@ -1791,7 +1801,7 @@ pub fn source_badge(ui: &mut Ui, source: Source) {
 
 pub fn card_frame() -> egui::Frame {
     egui::Frame::new()
-        .fill(CARD)
+        .fill(pal().card)
         .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(egui::Margin::same(16))
 }

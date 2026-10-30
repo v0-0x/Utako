@@ -1,12 +1,14 @@
 //! The egui front-end.
 
 mod art;
+mod holiday;
 mod panels;
 mod picker;
 mod profile;
 mod settings;
 mod tag_editor;
 pub mod theme;
+pub mod themes;
 mod views;
 mod widgets;
 
@@ -74,6 +76,11 @@ pub enum Action {
     EditTags(Vec<Track>),
     /// Asks before importing a settings file.
     ImportSettings(std::path::PathBuf),
+    /// A color theme (by id); it brings its accent along.
+    SetTheme(String),
+    /// Holiday themes: "auto", "off" or a holiday's id.
+    SetHoliday(String),
+    SetHolidayEffects(bool),
 }
 
 /// Per-frame context handed to every view.
@@ -89,6 +96,12 @@ pub struct Cx<'a> {
     pub actions: &'a mut Vec<Action>,
     /// The app logo (same artwork as the window and launcher icon).
     pub logo: egui::TextureId,
+    /// The holiday theme on now, if any.
+    pub holiday: Option<&'static themes::Holiday>,
+    /// The color theme picked, the holiday setting and whether its animation runs.
+    pub theme: &'a str,
+    pub holiday_setting: &'a str,
+    pub holiday_effects: bool,
 }
 
 /// Largest texture egui may make (its glyph atlas grows up to this square).
@@ -150,6 +163,11 @@ pub struct App {
     zoom: f32,
     /// The `?` shortcut list is open.
     show_keys: bool,
+    /// Today (year, month, day) for the holiday themes, and when it was looked at.
+    today: (i64, u32, u32),
+    today_checked: Option<Instant>,
+    holiday: Option<&'static themes::Holiday>,
+    effects: holiday::Effects,
     shared: Arc<Shared>,
     cmd: UnboundedSender<Command>,
     pub(crate) cfg: Config,
@@ -246,6 +264,10 @@ impl App {
             right_fits: true,
             zoom,
             show_keys: false,
+            today: (0, 0, 0),
+            today_checked: None,
+            holiday: None,
+            effects: holiday::Effects::default(),
             accent,
             styled_accent: accent,
             tint: NEUTRAL_TINT,
@@ -413,6 +435,13 @@ impl App {
                     self.sidebar_epoch += 1;
                     self.cfg_changed_at = Some(Instant::now());
                 }
+                Action::SetTheme(id) => {
+                    let t = themes::color_theme(&id);
+                    self.cfg.ui.theme = t.id.to_string();
+                    self.cfg.ui.accent = [t.accent.r(), t.accent.g(), t.accent.b()];
+                }
+                Action::SetHoliday(h) => self.cfg.ui.holiday = h,
+                Action::SetHolidayEffects(on) => self.cfg.ui.holiday_effects = on,
             }
         }
         let _ = ctx;
@@ -539,12 +568,12 @@ impl App {
                 .show(ui, |ui| {
                     for (keys, what) in SHORTCUTS {
                         ui.label(egui::RichText::new(*keys).color(theme::TEXT).strong());
-                        ui.label(egui::RichText::new(*what).color(theme::TEXT_DIM));
+                        ui.label(egui::RichText::new(*what).color(theme::pal().text_dim));
                         ui.end_row();
                     }
                 });
             ui.add_space(10.0);
-            if widgets::pill(ui, "Close", theme::CARD, theme::TEXT).clicked() {
+            if widgets::pill(ui, "Close", theme::pal().card, theme::TEXT).clicked() {
                 self.show_keys = false;
             }
         });
@@ -580,10 +609,22 @@ impl App {
         }
     }
 
-    /// The accent comes from the settings; the background tint follows the current cover.
+    /// The colors come from the theme and the accent from the settings (a holiday theme
+    /// brings its own and a tint); the background tint follows the current cover.
     fn update_colors(&mut self, ctx: &egui::Context, player: &PlayerView) {
-        let accent = Color32::from_rgb(self.cfg.ui.accent[0], self.cfg.ui.accent[1], self.cfg.ui.accent[2]);
-        if accent != self.styled_accent {
+        // The date is looked at once a minute, so a holiday comes on while Sumo stays open.
+        if self.today_checked.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+            self.today = themes::today();
+            self.today_checked = Some(Instant::now());
+        }
+        self.holiday = themes::holiday(&self.cfg.ui.holiday, self.today.1, self.today.2);
+        let palette = themes::palette(themes::color_theme(&self.cfg.ui.theme), self.holiday);
+        let accent = match self.holiday {
+            Some(h) => h.accent,
+            None => Color32::from_rgb(self.cfg.ui.accent[0], self.cfg.ui.accent[1], self.cfg.ui.accent[2]),
+        };
+        if accent != self.styled_accent || palette != theme::pal() {
+            theme::set_palette(palette);
             theme::apply_style(ctx, accent);
             self.styled_accent = accent;
         }
@@ -756,7 +797,7 @@ impl App {
                                 tracks: std::mem::take(tracks),
                             });
                         }
-                        if widgets::pill(ui, "Cancel", theme::CARD, theme::TEXT).clicked() {
+                        if widgets::pill(ui, "Cancel", theme::pal().card, theme::TEXT).clicked() {
                             close = true;
                         }
                     });
@@ -777,7 +818,7 @@ impl App {
                                 name: name.trim().to_string(),
                             });
                         }
-                        if widgets::pill(ui, "Cancel", theme::CARD, theme::TEXT).clicked() {
+                        if widgets::pill(ui, "Cancel", theme::pal().card, theme::TEXT).clicked() {
                             close = true;
                         }
                     });
@@ -799,7 +840,7 @@ impl App {
                         {
                             submit = Some(Command::ImportSettings(path.clone()));
                         }
-                        if widgets::pill(ui, "Cancel", theme::CARD, theme::TEXT).clicked() {
+                        if widgets::pill(ui, "Cancel", theme::pal().card, theme::TEXT).clicked() {
                             close = true;
                         }
                     });
@@ -848,7 +889,7 @@ impl App {
                             let typed = std::mem::take(password);
                             submit = Some(Command::AuthorizeUpdate(crate::updater::Secret::new(typed)));
                         }
-                        if widgets::pill(ui, "Cancel", theme::CARD, theme::TEXT).clicked() {
+                        if widgets::pill(ui, "Cancel", theme::pal().card, theme::TEXT).clicked() {
                             submit = Some(Command::CancelUpdate);
                         }
                     });
@@ -879,7 +920,7 @@ impl App {
                         if widgets::pill(ui, button, theme::DANGER, Color32::WHITE).clicked() {
                             submit = Some(Command::DeletePlaylist(id.clone()));
                         }
-                        if widgets::pill(ui, "Cancel", theme::CARD, theme::TEXT).clicked() {
+                        if widgets::pill(ui, "Cancel", theme::pal().card, theme::TEXT).clicked() {
                             close = true;
                         }
                     });
@@ -966,11 +1007,13 @@ impl App {
             .show(ctx, |ui| {
                 for t in feed.toasts.iter().rev().take(3) {
                     let fill = match t.kind {
-                        crate::service::ToastKind::Info => Color32::from_rgb(0x2e, 0x77, 0xd0),
+                        // The family greys, not a blue of its own.
+                        crate::service::ToastKind::Info => theme::pal().selected,
                         crate::service::ToastKind::Error => Color32::from_rgb(0xc4, 0x23, 0x35),
                     };
                     egui::Frame::new()
                         .fill(fill)
+                        .stroke(egui::Stroke::new(1.0, theme::with_alpha(Color32::WHITE, 16)))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(egui::Margin::symmetric(16, 10))
                         .shadow(egui::epaint::Shadow {
@@ -1056,7 +1099,7 @@ impl eframe::App for App {
         }
         {
             // Window background.
-            ui.painter().rect_filled(ui.max_rect(), 0.0, theme::WINDOW_BG);
+            ui.painter().rect_filled(ui.max_rect(), 0.0, theme::pal().window_bg);
             let width = ui.available_width();
             // Narrow windows get the icon sidebar and no right panel.
             let narrow = width < 820.0;
@@ -1079,6 +1122,8 @@ impl eframe::App for App {
             let overlay = self.right_overlay;
             let right_tab = self.right_tab;
 
+            // Copies: the settings page changes `self.cfg` while `cx` is in use.
+            let (theme_id, holiday_setting) = (self.cfg.ui.theme.clone(), self.cfg.ui.holiday.clone());
             let mut cx = Cx {
                 lib: &lib_guard,
                 player,
@@ -1088,6 +1133,10 @@ impl eframe::App for App {
                 tint: self.tint,
                 actions: &mut actions,
                 logo: self.logo.id(),
+                holiday: self.holiday,
+                theme: &theme_id,
+                holiday_setting: &holiday_setting,
+                holiday_effects: self.cfg.ui.holiday_effects,
             };
 
             panels::player_dock(ui, &mut cx, (show_right || overlay).then_some(right_tab));
@@ -1117,10 +1166,15 @@ impl eframe::App for App {
             }
             let (can_back, can_forward) = (!self.history.is_empty(), !self.forward.is_empty());
             let page_area = ui.available_rect_before_wrap();
-            egui::CentralPanel::default()
+            // Holiday animations move only while the window has focus (and never under the
+            // full-screen lyrics); otherwise the window stays still and costs nothing.
+            let now = ctx.input(|i| i.time);
+            let focused = ctx.input(|i| i.focused);
+            let moving = self.cfg.ui.holiday_effects && focused && self.view != View::NowPlaying;
+            let page = egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
-                        .fill(theme::PANEL)
+                        .fill(theme::pal().panel)
                         .corner_radius(egui::CornerRadius::same(theme::RADIUS))
                         .outer_margin(egui::Margin {
                             left: panels::GAP as i8,
@@ -1131,6 +1185,9 @@ impl eframe::App for App {
                 )
                 .show(ui, |ui| {
                     ui.multiply_opacity(1.0 - (1.0 - fade).powi(2));
+                    if let Some(h) = self.holiday {
+                        holiday::backdrop(ui.painter(), ui.max_rect(), h, now as f32, moving);
+                    }
                     if self.view != View::NowPlaying {
                         // The icon-only sidebar has no room for the search field: it moves up here.
                         let mut search = collapsed.then_some(panels::SidebarState {
@@ -1145,6 +1202,18 @@ impl eframe::App for App {
                     panels::update_bar(ui, &mut cx, &mut self.cfg.updates.skipped, &mut self.update_dismissed);
                     if self.cfg.updates.skipped != skipped_before {
                         self.cfg_changed_at = Some(Instant::now());
+                    }
+                    // Once a year per holiday: say it came on by itself, and how to turn it off.
+                    if let (Some(h), "auto") = (self.holiday, self.cfg.ui.holiday.as_str()) {
+                        let key = format!("{}-{}", h.id, self.today.0);
+                        if self.cfg.ui.holiday_seen != key {
+                            if let Some(turn_off) = panels::holiday_notice(ui, &mut cx, h) {
+                                if turn_off {
+                                    self.cfg.ui.holiday = "off".into();
+                                }
+                                self.cfg.ui.holiday_seen = key;
+                            }
+                        }
                     }
                     if self.view == View::Settings {
                         settings::show(ui, &mut cx, &mut self.cfg, &mut self.settings, &self.paths, self.rss_mb);
@@ -1176,7 +1245,22 @@ impl eframe::App for App {
                         };
                         views::show(ui, &mut cx, &mut state);
                     }
-                });
+                })
+                .response
+                .rect;
+            if let Some(h) = self.holiday {
+                let page = Rect::from_min_max(
+                    egui::pos2(page.left() + panels::GAP, page.top() + panels::GAP),
+                    egui::pos2(page.right() - panels::GAP, page.bottom()),
+                );
+                let painter = ctx
+                    .layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("holiday-decor")))
+                    .with_clip_rect(page);
+                holiday::garland(&painter, page, h, now as f32, moving);
+                if self.cfg.ui.holiday_effects && self.view != View::NowPlaying {
+                    self.effects.show(&ctx, h.effect, page, focused);
+                }
+            }
             if overlay {
                 let area = Rect::from_min_max(
                     egui::pos2(page_area.left() + panels::GAP, page_area.top() + panels::GAP),
@@ -1277,7 +1361,7 @@ impl eframe::App for App {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        theme::WINDOW_BG.to_normalized_gamma_f32()
+        theme::pal().window_bg.to_normalized_gamma_f32()
     }
 }
 

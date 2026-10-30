@@ -728,6 +728,14 @@ impl Service {
                 // fails with its own name if it still can't be played when its turn comes.
                 tracing::warn!("Spotify: {uri} can't be preloaded");
             }
+            SpotifyEvent::Unavailable { .. } if self.retried_load != self.load_seq => {
+                // Often a session that died with the network rather than the song: once, with
+                // a new connection.
+                tracing::warn!("Spotify: the song can't be loaded; trying again with a new connection");
+                self.drop_spotify_session();
+                let at = self.current_position();
+                self.reload_at(at).await;
+            }
             SpotifyEvent::Unavailable { .. } => {
                 let name = self.playing.as_ref().map(|t| t.title.clone()).unwrap_or_default();
                 self.load_failed(format!("“{name}” is not available on Spotify in your region"))
@@ -766,6 +774,48 @@ impl Service {
         self.status = PlayStatus::Loading;
         self.publish_player();
         self.dispatch(track, at).await;
+    }
+
+    /// Forgets the Spotify connection, so the next Spotify song connects anew.
+    pub(super) fn drop_spotify_session(&mut self) {
+        if let Some(sp) = self.spotify.take() {
+            sp.shutdown();
+        }
+        if self.engine == Engine::Spotify {
+            self.engine = Engine::None;
+        }
+    }
+
+    /// A song that doesn't start (the network changed under a Spotify session or a stream,
+    /// or after a long idle) is loaded again once over a new connection, then given up on.
+    pub(super) async fn check_stalled_load(&mut self) {
+        if self.status != PlayStatus::Loading || self.spotify_connecting || self.spotify_pending_play.is_some() {
+            self.loading_since = None;
+            return;
+        }
+        let since = match self.loading_since {
+            Some((seq, t)) if seq == self.load_seq => t,
+            _ => {
+                self.loading_since = Some((self.load_seq, Instant::now()));
+                return;
+            }
+        };
+        if since.elapsed() < LOAD_STALL {
+            return;
+        }
+        self.loading_since = None;
+        let name = self.playing.as_ref().map(|t| t.title.clone()).unwrap_or_default();
+        if self.retried_load != self.load_seq {
+            tracing::warn!("“{name}” hasn't started after {LOAD_STALL:?}; loading it again over a new connection");
+            if self.engine == Engine::Spotify {
+                self.drop_spotify_session();
+            }
+            let at = self.current_position();
+            self.reload_at(at).await;
+        } else {
+            self.load_failed(format!("“{name}” didn't start; check your connection"))
+                .await;
+        }
     }
 
     /// Whether a Spotify event about `uri` is about the song playing now (an empty `uri` is
@@ -825,7 +875,8 @@ impl Service {
         let due = match &self.sleep {
             None => return,
             Some(Sleep::At(at)) => Instant::now() >= *at,
-            Some(Sleep::AfterSong(at)) => self.songs_started >= *at || self.status == PlayStatus::Stopped,
+            // A restored song shows as stopped before it plays: only an empty queue ends it.
+            Some(Sleep::AfterSong(at)) => self.songs_started >= *at || self.queue.current().is_none(),
         };
         if !due {
             return;
@@ -842,6 +893,7 @@ impl Service {
         let dt = self.last_tick.elapsed();
         self.last_tick = Instant::now();
         let playing = self.status == PlayStatus::Playing;
+        self.check_stalled_load().await;
 
         if playing && self.engine == Engine::Mpv {
             if let Some(mpv) = &self.mpv {
@@ -1158,6 +1210,7 @@ impl Service {
             let mut pv = self.shared.player.write().unwrap();
             pv.upcoming = self.queue.upcoming(200);
             pv.up_next_len = self.queue.up_next_len();
+            pv.upcoming_len = self.queue.upcoming_len();
         }
         self.shared.repaint();
     }

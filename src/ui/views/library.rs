@@ -22,9 +22,9 @@ pub(super) fn songs(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             cx,
             st,
             &header,
-            |ui, r, _| widgets::placeholder(ui, r, theme::mix(tint, PANEL, 0.3), icon::FOLDER, 12),
+            |ui, r, _| widgets::placeholder(ui, r, theme::mix(tint, pal().panel, 0.3), icon::FOLDER, 12),
             |ui, cx| {
-                if widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, 22.0, TEXT_DIM, "Rescan folders").clicked() {
+                if widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, 22.0, pal().text_dim, "Rescan folders").clicked() {
                     cx.actions.push(Action::Cmd(Command::Rescan));
                 }
             },
@@ -226,11 +226,14 @@ pub(super) fn album(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &str) {
                     art.as_deref(),
                     r,
                     12,
-                    (theme::mix(source_color(Source::Local), PANEL, 0.4), icon::VINYL_RECORD),
+                    (
+                        theme::mix(source_color(Source::Local), pal().panel, 0.4),
+                        icon::VINYL_RECORD,
+                    ),
                 )
             },
             |ui, cx| {
-                if widgets::icon_button(ui, icon::USER, 22.0, TEXT_DIM, &format!("Go to {artist}")).clicked() {
+                if widgets::icon_button(ui, icon::USER, 22.0, pal().text_dim, &format!("Go to {artist}")).clicked() {
                     cx.actions.push(widgets::artist_action(cx.lib, &artist));
                 }
             },
@@ -303,7 +306,7 @@ pub(super) fn playlist(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, id: &str) {
             ui.label(
                 egui::RichText::new("Apple Music songs play from your local files, Spotify or SoundCloud")
                     .small()
-                    .color(TEXT_FAINT),
+                    .color(pal().text_faint),
             );
             ui.add_space(4.0);
         }
@@ -335,17 +338,18 @@ pub(super) fn playlist(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, id: &str) {
 pub(super) fn playlist_actions(ui: &mut Ui, cx: &mut Cx, p: &Playlist) {
     match p.kind {
         PlaylistKind::Spotify | PlaylistKind::SpotifyLiked => {
-            if widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, 22.0, TEXT_DIM, "Sync with Spotify").clicked() {
+            if widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, 22.0, pal().text_dim, "Sync with Spotify").clicked() {
                 cx.actions.push(Action::Cmd(Command::SyncSpotify));
             }
         }
         PlaylistKind::SoundCloud | PlaylistKind::SoundCloudLikes => {
-            if widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, 22.0, TEXT_DIM, "Sync with SoundCloud").clicked() {
+            if widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, 22.0, pal().text_dim, "Sync with SoundCloud").clicked()
+            {
                 cx.actions.push(Action::Cmd(Command::SyncSoundCloud));
             }
         }
         PlaylistKind::SpotifyAlbum | PlaylistKind::SoundCloudAlbum => {
-            if widgets::icon_button(ui, icon::TRASH, 22.0, TEXT_DIM, "Remove from your albums").clicked() {
+            if widgets::icon_button(ui, icon::TRASH, 22.0, pal().text_dim, "Remove from your albums").clicked() {
                 cx.actions.push(Action::Delete(p.id.clone()));
             }
             let link = match (p.kind, p.remote_id.as_deref()) {
@@ -355,7 +359,7 @@ pub(super) fn playlist_actions(ui: &mut Ui, cx: &mut Cx, p: &Playlist) {
             };
             if let Some(url) = link {
                 let tip = format!("Open on {}", service_name(p.kind.source()));
-                if widgets::icon_button(ui, icon::ARROW_SQUARE_OUT, 22.0, TEXT_DIM, &tip).clicked() {
+                if widgets::icon_button(ui, icon::ARROW_SQUARE_OUT, 22.0, pal().text_dim, &tip).clicked() {
                     cx.actions.push(Action::OpenUrl(url));
                 }
             }
@@ -363,21 +367,21 @@ pub(super) fn playlist_actions(ui: &mut Ui, cx: &mut Cx, p: &Playlist) {
         PlaylistKind::Custom | PlaylistKind::M3u => {
             if let Some(copied) = widgets::copied(ui.ctx()) {
                 let tip = format!("Paste {} (Ctrl+V)", widgets::songs(copied.tracks.len()));
-                if widgets::icon_button(ui, icon::CLIPBOARD_TEXT, 22.0, TEXT_DIM, &tip).clicked() {
+                if widgets::icon_button(ui, icon::CLIPBOARD_TEXT, 22.0, pal().text_dim, &tip).clicked() {
                     widgets::paste(cx, p, None, Some(copied));
                 }
             }
-            if widgets::icon_button(ui, icon::PENCIL_SIMPLE, 22.0, TEXT_DIM, "Rename").clicked() {
+            if widgets::icon_button(ui, icon::PENCIL_SIMPLE, 22.0, pal().text_dim, "Rename").clicked() {
                 cx.actions.push(Action::Rename(p.id.clone(), p.name.clone()));
             }
-            if widgets::icon_button(ui, icon::TRASH, 22.0, TEXT_DIM, "Delete").clicked() {
+            if widgets::icon_button(ui, icon::TRASH, 22.0, pal().text_dim, "Delete").clicked() {
                 cx.actions.push(Action::Delete(p.id.clone()));
             }
         }
         _ => {}
     }
     if p.track_ids.iter().any(|id| id.starts_with("local:"))
-        && widgets::icon_button(ui, icon::EXPORT, 22.0, TEXT_DIM, "Export local songs as .m3u").clicked()
+        && widgets::icon_button(ui, icon::EXPORT, 22.0, pal().text_dim, "Export local songs as .m3u").clicked()
     {
         let dir = directories::UserDirs::new()
             .and_then(|u| u.audio_dir().map(|d| d.to_path_buf()))
@@ -474,7 +478,8 @@ pub(super) fn library_artist(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: 
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(
-                    egui::RichText::new(format!("Looking for {} on Spotify and SoundCloud…", a.name)).color(TEXT_DIM),
+                    egui::RichText::new(format!("Looking for {} on Spotify and SoundCloud…", a.name))
+                        .color(pal().text_dim),
                 );
             });
             return;

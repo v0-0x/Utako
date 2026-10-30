@@ -37,7 +37,7 @@ It's written in Rust with [egui](https://github.com/emilk/egui), like [Spotifast
 - **Last.fm scrobbling**: by default every song scrobbles the moment it starts playing. Untick *Scrobble as soon as a song starts* to use Last.fm's usual rule instead (half the song or 4 minutes). Also sends "now playing" updates, and queues scrobbles offline to send later. SoundCloud uploads are scrobbled as the song they are: "Artist - Title [Free DL]" titles are cleaned up, Genius supplies the real artist, title and album (re-upload channels like "Nightcore …" get the original artist), and songs still without an album get the one Last.fm knows, so apps like .fmbot show the cover. Local files without tags are looked up on Spotify by their file name and scrobbled with Spotify's artist, title and album (or Last.fm's album instead of the folder's name). If Last.fm ignores a scrobble (e.g. a file tagged "Unknown Artist"), Sumo says why.
 - **Your Last.fm profile**: once your account is connected, your profile picture and name sit at the bottom of the sidebar (click them for your stats; the gear next to them opens Settings), and Home ends with your week on Last.fm. The profile page shows your scrobbles, artists, albums, tracks and daily average, a **listening chart** (the last 7 or 30 days by day, the last 12 months by month, or every year since you joined), your **top artists, albums and tracks**, your **top genres** (from the tags on your top artists) and your **recent scrobbles**, including what's playing now and loved songs. Each section has its own menu: **Today, the last 7 or 30 days, 3, 6 or 12 months, or all time** (Last.fm has no "today", so Sumo counts the day's scrobbles itself). Click an artist to open them in your library (or search for them), and an album or song to search for it. The stats come from Last.fm with your API key; a profile with a private listening history can't be shown.
 - **MPRIS / media keys**: works with `playerctl`, waybar, polybar, KDE/GNOME media widgets and headset buttons.
-- **Its own look**: graphite and off-white like the record logo, rounded "tile" panels, a floating player dock, header cards that glow in the colours of the cover, and soft hover and page transitions. **Drag the edges** of the sidebar and the lyrics / queue panel to resize them (sizes are remembered); drag the sidebar narrow and it becomes a strip of icons and covers. Also: a queue, back / forward navigation, albums and artists grids, gapless playback, ReplayGain, session restore, and drag and drop (drop a folder, `.m3u` or `Library.xml` onto the window). The accent colour can be changed in Settings.
+- **Its own look**: graphite and off-white like the record logo, rounded "tile" panels, a floating player dock, header cards that glow in the colours of the cover, and soft hover and page transitions. **Drag the edges** of the sidebar and the lyrics / queue panel to resize them (sizes are remembered); drag the sidebar narrow and it becomes a strip of icons and covers. Also: a queue, back / forward navigation, albums and artists grids, gapless playback, ReplayGain, session restore, and drag and drop (drop a folder, `.m3u` or `Library.xml` onto the window). **Themes** (the Themes button above Settings): eight color themes shared with Kumo (Sumo, Midnight, Forest, Sakura, Ember, Ocean, Dusk and true Black), any accent colour, and holiday themes that come on by themselves in their month (New Year, Valentine's Day, cherry blossoms, a summer festival, Halloween, Christmas) with their own colour, decorations and an animation (fireworks, hearts, petals, fireflies, bats, snow). Pick *Off* or one holiday all year, and switch the animation off on its own; it only moves while Sumo's window has focus.
 - **Queue and more**: the queue shows *Queued by you* apart from *Next from <playlist>*; drag songs to reorder them, and clear either part. In a narrow window the queue and lyrics open over the page. A **sleep timer** (the moon in the player) pauses after 15 minutes to 1½ hours, or after the current song. Home shows your **most played** songs and **recently added** albums. Albums with an album artist (compilations) stay together, multi-disc albums play disc by disc, and the Albums page sorts by artist, title or date added. The window opens at the size you left it, and starting Sumo again brings the running one to the front. On Linux, Sumo can show a desktop notification when a song starts (Settings → Appearance).
 - **Low memory use**: cover art is decoded at the size it's drawn and kept in a small LRU cache, fonts are memory-mapped from your system, and only two runtime threads are used. The window doesn't redraw at all while nothing changes.
 
@@ -190,6 +190,7 @@ Logs: on Linux run `MULTIMUSIC_LOG=multimusic=debug multimusic` in a terminal. T
 - **Media keys don't work**: on Linux Sumo registers as `org.mpris.MediaPlayer2.multimusic`; check with `playerctl -l`. It needs a D-Bus session, which every normal desktop session has. Windows (media overlay and keys) and macOS (Now Playing and keys) need nothing.
 - **macOS says Sumo "can't be opened" or "is damaged"**: it isn't notarized by Apple. Right-click it → Open → Open once, or run `xattr -dr com.apple.quarantine /Applications/Sumo.app` in Terminal.
 - **Windows: the window stays black or Sumo closes right away**: Sumo draws with OpenGL; update your graphics driver. Remote Desktop sessions and virtual machines without a graphics driver only offer OpenGL 1.1, which is too old. `%APPDATA%\multimusic\data\multimusic.log` says what went wrong.
+- **Beta updates**: *Settings → Updates → Beta updates* gets new versions first, as betas (GitHub pre-releases), before they go out to everyone. Turning it off keeps the beta you have until a newer stable version comes out.
 - **An update doesn't install**: *Settings → Updates* shows why. You can always download the newest version from the [Releases page](https://github.com/v0-0x/sumo-music/releases/latest) and install it over the old one; settings are kept.
 - **Interface too small or too large**: Settings → Appearance → *Interface scale*.
 
@@ -198,15 +199,18 @@ Logs: on Linux run `MULTIMUSIC_LOG=multimusic=debug multimusic` in a terminal. T
 ```
 src/
   main.rs              window + runtime setup
-  service.rs           background service: playback state machine, sync jobs, search, pages, integrations
+  service/             background service: commands and shared state (mod.rs), playback and
+                       crossfade (playback.rs), library scans and syncs (sync.rs), search and
+                       pages (pages.rs), downloads (downloads.rs), updates and settings files (updates.rs)
   links.rs             recognises pasted Spotify / SoundCloud / Apple Music links
   downloader.rs        downloads: finds the audio, then tags it with metadata, cover and lyrics
   player/              play queue, mpv (JSON IPC) engine, librespot engine + Spotify OAuth
   library/             SQLite store, incremental tag scanner and tag writer (lofty), M3U import/export
   providers/           Spotify (session + Web API), SoundCloud api-v2, Apple Music (XML + catalog API), YouTube (yt-dlp)
   integrations/        lyrics (LRC/LRCLIB/Genius), Genius song details, Last.fm (scrobbling, profile stats),
-                       Discord RPC, MPRIS
-  ui/                  egui views, theme, widgets, cover art cache
+                       Discord RPC, MPRIS, notifications
+  ui/                  egui pages (views/), theme, color and holiday themes (themes.rs, holiday.rs),
+                       widgets, cover art cache
 ```
 
 The UI thread only draws. Playback, network and disk work run on a small tokio runtime and publish snapshots that the UI reads each frame.

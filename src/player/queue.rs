@@ -256,6 +256,11 @@ impl Queue {
             .collect()
     }
 
+    /// How many songs are still to come (queued ones and the rest of the list).
+    pub fn upcoming_len(&self) -> usize {
+        self.up_next.len() + self.order.len().saturating_sub(self.pos.map_or(0, |p| p + 1))
+    }
+
     pub fn up_next_len(&self) -> usize {
         self.up_next.len()
     }

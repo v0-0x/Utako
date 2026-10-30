@@ -26,7 +26,7 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
                 Some(links::Target::ArtistName(_)) => "Looking on Spotify and SoundCloud…",
                 _ => "Opening link…",
             };
-            ui.label(egui::RichText::new(what).color(TEXT_DIM));
+            ui.label(egui::RichText::new(what).color(pal().text_dim));
         });
         return;
     }
@@ -37,7 +37,7 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
         panels::empty_state(ui, icon::WARNING_CIRCLE, "Couldn't open this page");
         ui.vertical_centered(|ui| {
             ui.set_max_width(520.0);
-            ui.label(egui::RichText::new(err).color(TEXT_FAINT));
+            ui.label(egui::RichText::new(err).color(pal().text_faint));
             ui.add_space(12.0);
             let primary = if needs_login { "Open Settings" } else { "Try again" };
             ui.horizontal(|ui| {
@@ -55,7 +55,7 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
                     });
                 }
                 if let Some(url) = url {
-                    if widgets::pill(ui, "Open in browser", HOVER, TEXT).clicked() {
+                    if widgets::pill(ui, "Open in browser", pal().hover, TEXT).clicked() {
                         cx.actions.push(Action::OpenUrl(url));
                     }
                 }
@@ -90,7 +90,7 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
         };
         let fallback = match p.source {
             Some(s) => (
-                theme::mix(source_color(s), PANEL, 0.4),
+                theme::mix(source_color(s), pal().panel, 0.4),
                 if p.round { icon::USER } else { icon::MUSIC_NOTES },
             ),
             None => widgets::artist_fallback(),
@@ -142,8 +142,14 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
                     }
                 }
                 if !p.tracks.is_empty()
-                    && widgets::icon_button(ui, icon::PLUS_CIRCLE, 28.0, TEXT_DIM, "Save as a playlist in Sumo")
-                        .clicked()
+                    && widgets::icon_button(
+                        ui,
+                        icon::PLUS_CIRCLE,
+                        28.0,
+                        pal().text_dim,
+                        "Save as a playlist in Sumo",
+                    )
+                    .clicked()
                 {
                     cx.actions.push(Action::Cmd(Command::CreatePlaylist {
                         name: p.title.clone(),
@@ -153,7 +159,7 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
                 widgets::download_button(ui, cx, &p.tracks.iter().collect::<Vec<_>>(), 24.0);
                 if let Some(url) = &p.external_url {
                     let tip = format!("Open on {}", service_name(p.source));
-                    if widgets::icon_button(ui, icon::ARROW_SQUARE_OUT, 24.0, TEXT_DIM, &tip).clicked() {
+                    if widgets::icon_button(ui, icon::ARROW_SQUARE_OUT, 24.0, pal().text_dim, &tip).clicked() {
                         cx.actions.push(Action::OpenUrl(url.clone()));
                     }
                 }
@@ -168,7 +174,7 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
             ui.label(
                 egui::RichText::new("Apple Music songs play from your local files, Spotify or SoundCloud")
                     .small()
-                    .color(TEXT_FAINT),
+                    .color(pal().text_faint),
             );
             ui.add_space(4.0);
         }
@@ -195,7 +201,8 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(
-                    egui::RichText::new(format!("Adding {}'s songs from {}…", p.title, other.label())).color(TEXT_DIM),
+                    egui::RichText::new(format!("Adding {}'s songs from {}…", p.title, other.label()))
+                        .color(pal().text_dim),
                 );
             });
         }
@@ -219,12 +226,22 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             let hits = cx.lib.search(&q, 50);
             *st.search_cache = (q.clone(), cx.lib.version, hits.into_iter().map(|t| t.id).collect());
         }
-        let local: Vec<&Track> = st.search_cache.2.iter().filter_map(|id| cx.lib.get(id)).collect();
         let search = cx.feed.search.clone();
         let fresh = search.query == q;
         let empty: Vec<Track> = Vec::new();
         let spotify = if fresh { &search.spotify } else { &empty };
         let soundcloud = if fresh { &search.soundcloud } else { &empty };
+        // A Spotify or SoundCloud song you played is in the library too: listed once, as the
+        // service's result.
+        let remote: std::collections::HashSet<&str> =
+            spotify.iter().chain(soundcloud.iter()).map(|t| t.id.as_str()).collect();
+        let local: Vec<&Track> = st
+            .search_cache
+            .2
+            .iter()
+            .filter_map(|id| cx.lib.get(id))
+            .filter(|t| !remote.contains(t.id.as_str()))
+            .collect();
         let spotify_pending = !fresh || search.spotify_pending;
         let soundcloud_pending = !fresh || search.soundcloud_pending;
 
@@ -348,7 +365,7 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             .filter(|t| !songs.iter().any(|s| s.id == t.id))
             .collect();
         if !local.is_empty() {
-            widgets::heading_icon(ui, icon::BOOKS, TEXT_DIM, "More in your library");
+            widgets::heading_icon(ui, icon::BOOKS, pal().text_dim, "More in your library");
             let opts = TableOpts {
                 id: "s-local",
                 context: &ctx_name,
@@ -443,21 +460,21 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
 pub(super) fn artist_source_fallback(source: Source) -> (Color32, &'static str) {
     match source {
         Source::Local => widgets::artist_fallback(),
-        s => (theme::mix(source_color(s), PANEL, 0.45), icon::USER),
+        s => (theme::mix(source_color(s), pal().panel, 0.45), icon::USER),
     }
 }
 
 /// Small service logo in the corner of an artist picture.
 pub(super) fn source_corner(ui: &Ui, art: Rect, source: Source) {
     let c = art.right_bottom() - vec2(art.width() * 0.15, art.height() * 0.15);
-    ui.painter().circle_filled(c, 13.0, PANEL);
+    ui.painter().circle_filled(c, 13.0, pal().panel);
     let glyph = if source == Source::Local {
         icon::BOOKS
     } else {
         theme::source_icon(source)
     };
     let color = if source == Source::Local {
-        TEXT_DIM
+        pal().text_dim
     } else {
         source_color(source)
     };
@@ -466,8 +483,9 @@ pub(super) fn source_corner(ui: &Ui, art: Rect, source: Source) {
 
 pub(super) fn top_card_frame(ui: &mut Ui, width: f32) -> (Rect, egui::Response) {
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 230.0), Sense::click());
-    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS + 2), CARD);
-    widgets::fade_fill(ui, resp.id, rect, RADIUS + 2, resp.hovered(), HOVER);
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(RADIUS + 2), pal().card);
+    widgets::fade_fill(ui, resp.id, rect, RADIUS + 2, resp.hovered(), pal().hover);
     (rect, resp.on_hover_cursor(CursorIcon::PointingHand))
 }
 
@@ -553,7 +571,7 @@ pub(super) fn top_track_card(ui: &mut Ui, cx: &mut Cx, t: &Track, width: f32, so
         Pos2::new(used.right() + 10.0, y - 8.0),
         &t.artist,
         theme::font(14.0),
-        TEXT_DIM,
+        pal().text_dim,
         rect.right() - used.right() - 90.0,
     );
     if artist.clicked() {
@@ -587,7 +605,7 @@ pub(super) fn type_chip(ui: &Ui, left_center: Pos2, label: &str, source: Source)
         theme::source_icon(source)
     };
     let color = if source == Source::Local {
-        TEXT_DIM
+        pal().text_dim
     } else {
         source_color(source)
     };
@@ -624,7 +642,7 @@ pub(super) fn link_card(ui: &mut Ui, cx: &mut Cx, link: &links::Link) {
     widgets::card_frame().show(ui, |ui| {
         ui.set_width(ui.available_width().min(560.0));
         ui.horizontal(|ui| {
-            let color = service.map(source_color).unwrap_or(TEXT_DIM);
+            let color = service.map(source_color).unwrap_or(pal().text_dim);
             ui.label(
                 egui::RichText::new(glyph)
                     .family(theme::icons())
@@ -636,7 +654,7 @@ pub(super) fn link_card(ui: &mut Ui, cx: &mut Cx, link: &links::Link) {
                     egui::RichText::new(format!("{} {what}", service_name(service).replace("the web", "Music")))
                         .font(theme::bold_font(17.0)),
                 );
-                ui.label(egui::RichText::new("Press Enter or click Open to load it").color(TEXT_DIM));
+                ui.label(egui::RichText::new("Press Enter or click Open to load it").color(pal().text_dim));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if widgets::pill(ui, "Open", cx.accent, theme::on_color(cx.accent)).clicked() {
@@ -654,7 +672,7 @@ pub(super) fn search_error(ui: &mut Ui, error: &str) {
                 .family(theme::icons())
                 .color(DANGER),
         );
-        ui.label(egui::RichText::new(error).color(TEXT_DIM));
+        ui.label(egui::RichText::new(error).color(pal().text_dim));
     });
     ui.add_space(6.0);
 }
@@ -663,9 +681,9 @@ pub(super) fn remote_status(ui: &mut Ui, pending: bool) {
     ui.horizontal(|ui| {
         if pending {
             ui.spinner();
-            ui.label(egui::RichText::new("Searching…").color(TEXT_DIM));
+            ui.label(egui::RichText::new("Searching…").color(pal().text_dim));
         } else {
-            ui.label(egui::RichText::new("No results").color(TEXT_FAINT));
+            ui.label(egui::RichText::new("No results").color(pal().text_faint));
         }
     });
     ui.add_space(4.0);
@@ -696,7 +714,7 @@ pub(super) fn browse(ui: &mut Ui, cx: &mut Cx) {
         let (rect, _) = ui.allocate_exact_size(vec2(w, 120.0), Sense::hover());
         let base = source_color(s);
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(8), theme::mix(base, PANEL, 0.5));
+            .rect_filled(rect, CornerRadius::same(8), theme::mix(base, pal().panel, 0.5));
         ui.painter().text(
             rect.left_top() + vec2(16.0, 16.0),
             Align2::LEFT_TOP,
@@ -722,13 +740,17 @@ pub(super) fn browse(ui: &mut Ui, cx: &mut Cx) {
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(icon::LINK).family(theme::icons()).color(TEXT_DIM));
+        ui.label(
+            egui::RichText::new(icon::LINK)
+                .family(theme::icons())
+                .color(pal().text_dim),
+        );
         ui.label(
             egui::RichText::new(
                 "Tip: paste a Spotify, SoundCloud or Apple Music link (artist, album, playlist or song) \
                  into the search bar to open it.",
             )
-            .color(TEXT_DIM),
+            .color(pal().text_dim),
         );
     });
     let _ = cx;

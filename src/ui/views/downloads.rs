@@ -72,15 +72,15 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
         } else {
             format!("Songs are saved in {shown}, in a folder for each service")
         };
-        ui.label(egui::RichText::new(saved_to).color(TEXT_DIM));
+        ui.label(egui::RichText::new(saved_to).color(pal().text_dim));
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            if widgets::pill(ui, "Open folder", HOVER, TEXT).clicked() {
+            if widgets::pill(ui, "Open folder", pal().hover, TEXT).clicked() {
                 let _ = std::fs::create_dir_all(st.download_dir);
                 cx.actions.push(Action::OpenUrl(dir.clone()));
             }
-            if active > 0 && widgets::pill(ui, "Cancel all", HOVER, TEXT).clicked() {
+            if active > 0 && widgets::pill(ui, "Cancel all", pal().hover, TEXT).clicked() {
                 cx.actions.push(Action::Cmd(Command::CancelDownloads));
             }
             let failed: Vec<Track> = rows
@@ -88,14 +88,15 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
                 .filter(|r| matches!(r.state, DownloadState::Failed(_)))
                 .map(|r| r.track.clone())
                 .collect();
-            if !failed.is_empty() && widgets::pill(ui, &format!("Retry {} failed", failed.len()), HOVER, TEXT).clicked()
+            if !failed.is_empty()
+                && widgets::pill(ui, &format!("Retry {} failed", failed.len()), pal().hover, TEXT).clicked()
             {
                 cx.actions.push(Action::Cmd(Command::Download(failed)));
             }
-            if finished > 0 && widgets::pill(ui, "Clear list", HOVER, TEXT).clicked() {
+            if finished > 0 && widgets::pill(ui, "Clear list", pal().hover, TEXT).clicked() {
                 cx.actions.push(Action::Cmd(Command::ClearDownloads));
             }
-            if widgets::pill(ui, "Change folder", HOVER, TEXT).clicked() {
+            if widgets::pill(ui, "Change folder", pal().hover, TEXT).clicked() {
                 cx.actions.push(Action::Go(View::Settings));
             }
         });
@@ -110,7 +111,7 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
                          album or profile.",
                     )
                     .size(12.5)
-                    .color(TEXT_FAINT),
+                    .color(pal().text_faint),
                 );
             });
         }
@@ -156,7 +157,7 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
                  recording on SoundCloud (YouTube is off in Settings), then tagged with all their details."
             }
         };
-        ui.label(egui::RichText::new(note).size(12.0).color(TEXT_FAINT));
+        ui.label(egui::RichText::new(note).size(12.0).color(pal().text_faint));
     });
 }
 
@@ -170,7 +171,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
     let t = &row.track;
     let id = Id::new(("download-row", &t.id));
     let hovered = ui.rect_contains_pointer(rect) || resp.context_menu_opened();
-    widgets::fade_fill(ui, id, rect, 10, hovered, HOVER);
+    widgets::fade_fill(ui, id, rect, 10, hovered, pal().hover);
     let art = Rect::from_min_size(rect.min + vec2(8.0, (H - 40.0) / 2.0), vec2(40.0, 40.0));
     widgets::cover(ui, cx.art, t.art.as_deref(), art, 6, widgets::track_fallback(t));
 
@@ -194,7 +195,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
         Pos2::new(tx, rect.top() + 30.0),
         &t.artist,
         theme::font(12.5),
-        TEXT_DIM,
+        pal().text_dim,
         tw,
     );
 
@@ -210,7 +211,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
                 Align2::RIGHT_CENTER,
                 "Waiting…",
                 theme::font(13.0),
-                TEXT_FAINT,
+                pal().text_faint,
             );
             Some((icon::X, "Cancel"))
         }
@@ -219,7 +220,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
                 Pos2::new(right.left(), right.center().y - 2.0),
                 vec2((right.width() - 88.0).max(20.0), 4.0),
             );
-            painter.rect_filled(bar, CornerRadius::same(2), SELECTED);
+            painter.rect_filled(bar, CornerRadius::same(2), pal().selected);
             let filled = Rect::from_min_size(bar.min, vec2(bar.width() * p.clamp(0.0, 1.0), bar.height()));
             painter.rect_filled(filled, CornerRadius::same(2), cx.accent);
             painter.text(
@@ -227,7 +228,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
                 Align2::RIGHT_CENTER,
                 format!("{:.0}%", p * 100.0),
                 theme::font(13.0),
-                TEXT_DIM,
+                pal().text_dim,
             );
             Some((icon::X, "Cancel"))
         }
@@ -242,7 +243,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
                 Align2::RIGHT_CENTER,
                 label,
                 theme::font(13.0),
-                TEXT_DIM,
+                pal().text_dim,
             );
             Some((icon::FOLDER_OPEN, "Show in folder"))
         }
@@ -263,7 +264,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
     if let Some((glyph, tip)) = button {
         let r = Rect::from_center_size(Pos2::new(right.right() - 14.0, right.center().y), vec2(30.0, 30.0));
         let b = ui.interact(r, id.with("button"), Sense::click());
-        let color = if b.hovered() { TEXT } else { TEXT_DIM };
+        let color = if b.hovered() { TEXT } else { pal().text_dim };
         theme::paint_icon(ui.painter(), r.center(), glyph, theme::icon_font(18.0), color);
         if b.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tip).clicked() {
             button_clicked = true;

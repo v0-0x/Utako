@@ -23,12 +23,13 @@ impl Service {
         }
         self.shared.repaint();
         let repo = self.cfg.updates.repo.clone();
+        let beta = self.cfg.updates.beta;
         let tx = self.internal_tx.clone();
         tokio::spawn(async move {
             let http = crate::updater::client();
             // Tests point this at a stand-in for GitHub.
             let api = std::env::var("MULTIMUSIC_UPDATE_API").unwrap_or_else(|_| GITHUB_API.to_string());
-            let result = crate::updater::latest(&http, &api, &repo)
+            let result = crate::updater::latest(&http, &api, &repo, beta)
                 .await
                 .map_err(|e| format!("{e:#}"));
             let _ = tx.send(Internal::UpdateChecked { manual, result });
@@ -42,7 +43,7 @@ impl Service {
             let why = if crate::updater::can_install() {
                 "This release has no download for your system yet"
             } else {
-                "Update with: cd ~/localmusicplayer && git pull && makepkg -sif"
+                "Update with: cd sumo-music && git pull && makepkg -sif"
             };
             self.shared.feed.write().unwrap().update.status = UpdateStatus::Failed(why.into());
             return;
