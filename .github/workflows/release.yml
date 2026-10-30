@@ -4,9 +4,11 @@
 # from there.
 #
 # Every release is a beta (a GitHub pre-release, offered only to copies with Beta updates on)
-# unless the pushed commit's message has [stable] in it, or the workflow is run by hand with
-# channel "stable". Running it as stable for a version already out as a beta turns that beta
-# into the stable release: the same files, now offered to everyone.
+# unless the pushed commit's title (its first line) has [stable] in it, or the workflow is run
+# by hand with channel "stable". Running it as stable for a version already out as a beta turns
+# that beta into the stable release: the same files, now offered to everyone. Running it by hand
+# with channel "demote" does the reverse: a stable release goes back to being a beta, and the
+# stable release before it is the one offered to everyone again.
 name: Release
 
 on:
@@ -23,9 +25,9 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "beta, or stable (also turns this version's beta into the stable release)"
+        description: "beta, stable (also turns this version's beta into the stable release), or demote (turns this version back into a beta)"
         type: choice
-        options: [beta, stable]
+        options: [beta, stable, demote]
         default: beta
 
 # Read-only by default; only the job that publishes the release can write.
@@ -64,7 +66,8 @@ jobs:
         run: |
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [ "$CHANNEL" = stable ] || printf '%s' "$MESSAGE" | grep -qF '[stable]'; then
+          # Only the title counts, so a message that merely mentions [stable] stays a beta.
+          if [ "$CHANNEL" = stable ] || printf '%s\n' "$MESSAGE" | head -n 1 | grep -qF '[stable]'; then
             BETA=false
           else
             BETA=true
@@ -80,6 +83,20 @@ jobs:
               gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest \
                 --title "Sumo $VERSION" --notes-file notes.md
               echo "::notice::v$VERSION was a beta and is now the stable release"
+            elif [ "$IS_BETA" = false ] && [ "$CHANNEL" = demote ]; then
+              # Back to a beta. Copies that already updated keep it; the others are offered
+              # the stable release before it again.
+              { echo "**Beta.** Offered to copies with *Settings › Updates › Beta updates* on; everyone else gets it once it's made the stable release."
+                echo
+                gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body; } > notes.md
+              gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+                --title "Sumo $VERSION beta" --notes-file notes.md
+              PREVIOUS=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts \
+                --limit 1 --json tagName --jq '.[0].tagName')
+              if [ -n "$PREVIOUS" ]; then
+                gh release edit "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --latest
+              fi
+              echo "::notice::v$VERSION is a beta again; $PREVIOUS is the stable release"
             else
               echo "::notice::v$VERSION is already published; bump the version to release again"
             fi
