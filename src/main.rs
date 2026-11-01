@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
     std::env::set_var("PULSE_PROP_stream.description", "Spotify");
     let paths = Paths::new();
     let filter = EnvFilter::try_from_env("MULTIMUSIC_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("multimusic=info,librespot=warn,warn"));
+        .unwrap_or_else(|_| EnvFilter::new("multimusic=info,librespot=warn,winit=error,warn"));
     match log_file(&paths) {
         // Windows and macOS apps have no terminal: the log goes to a file in the data folder.
         Some(file) => tracing_subscriber::fmt()
