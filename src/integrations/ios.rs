@@ -47,13 +47,15 @@ fn class(name: &CStr) -> Option<&'static AnyClass> {
 
 fn ns_string(text: &str) -> Option<Retained<AnyObject>> {
     let text = CString::new(text.replace('\0', "")).ok()?;
+    let cls = class(c"NSString")?;
     // SAFETY: a valid NUL-terminated UTF-8 string; the result is autoreleased and retained here.
-    unsafe { msg_send![class(c"NSString")?, stringWithUTF8String: text.as_ptr()] }
+    unsafe { msg_send![cls, stringWithUTF8String: text.as_ptr()] }
 }
 
 fn ns_number(value: f64) -> Option<Retained<AnyObject>> {
+    let cls = class(c"NSNumber")?;
     // SAFETY: numberWithDouble: takes a double and returns an autoreleased NSNumber.
-    unsafe { msg_send![class(c"NSNumber")?, numberWithDouble: value] }
+    unsafe { msg_send![cls, numberWithDouble: value] }
 }
 
 /// Sets the audio session to "playback": Sumo keeps playing in the background (with the

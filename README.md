@@ -2,7 +2,7 @@
 
 # Sumo
 
-A fast, lightweight, native music player (called MultiMusic until version 0.4) for **Windows, macOS and Arch Linux** that puts **your local files, Spotify, SoundCloud and your Apple Music library** in one place, with **synced lyrics**, **Discord Rich Presence**, **Last.fm scrobbling** and media-key / MPRIS support.
+A fast, lightweight, native music player (called MultiMusic until version 0.4) for **Windows, macOS and Arch Linux**, with a **beta for iPhone and iPad**, that puts **your local files, Spotify, SoundCloud and your Apple Music library** in one place, with **synced lyrics**, **Discord Rich Presence**, **Last.fm scrobbling** and media-key / MPRIS support.
 
 It's written in Rust with [egui](https://github.com/emilk/egui), like [Spotifast](https://spotifast.rocks/). There's no Electron and no web view, so it starts instantly and stays small in memory.
 
@@ -53,6 +53,23 @@ It's written in Rust with [egui](https://github.com/emilk/egui), like [Spotifast
 Moving from another computer? Export your settings there and import them here (see [Back up or move your settings](#back-up-or-move-your-settings)).
 
 The installers are built by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) from this repository: the Windows installer with Inno Setup, the macOS apps for Apple Silicon and Intel. Releases come from the version in `Cargo.toml`.
+
+## Install on iPhone or iPad (beta)
+
+Each release has `Sumo-<version>-ios.ipa` (iOS 15 or newer). It isn't on the App Store and isn't signed, so you install it yourself:
+
+- **[Sideloadly](https://sideloadly.io)** or **[AltStore](https://altstore.io)** on a Mac or PC: connect the iPhone, drop the `.ipa` in and sign in with your Apple ID. With a free Apple ID the app has to be signed again every 7 days (AltStore can do it by itself over Wi-Fi), and iOS asks you to trust your Apple ID once under *Settings → General → VPN & Device Management*. iOS 16 and newer also need *Settings → Privacy & Security → Developer Mode* on.
+- **TrollStore**, on the iOS versions it supports, installs it for good.
+
+What's different on iOS:
+
+- **Your music** goes in the Files app under **On My iPhone → Sumo** (copy it from a computer with Finder or iTunes file sharing, or from iCloud Drive), then *Settings → Local library → Rescan now*.
+- **Spotify, SoundCloud, Apple Music, Last.fm and lyrics** work as on the desktop. The easiest way to bring your logins over: on your computer use *Settings → Back up or move your settings → Export*, put the file in the same Sumo folder in Files, and import it on the phone.
+- Local files and SoundCloud play through Sumo's own player (iOS doesn't allow mpv): MP3, AAC and ALAC, FLAC, Ogg Vorbis, WAV and AIFF. Opus files and SoundCloud's Opus streams don't play there.
+- Music keeps playing with the screen locked, and the lock screen, Control Center and headphone buttons control it.
+- Not on iOS: downloads through YouTube (yt-dlp), Discord status, choosing the output device (iOS picks it: speaker, headphones, Bluetooth or AirPlay) and updating itself (Sumo says when a new version is out; install its `.ipa` the same way).
+
+The app is built by [`.github/workflows/ios.yml`](.github/workflows/ios.yml), which also starts it in the iOS simulator and plays a test song before a release is published.
 
 ## Install (Arch Linux)
 
@@ -204,11 +221,12 @@ src/
                        pages (pages.rs), downloads (downloads.rs), updates and settings files (updates.rs)
   links.rs             recognises pasted Spotify / SoundCloud / Apple Music links
   downloader.rs        downloads: finds the audio, then tags it with metadata, cover and lyrics
-  player/              play queue, mpv (JSON IPC) engine, librespot engine + Spotify OAuth
+  player/              play queue, mpv (JSON IPC) engine, librespot engine + Spotify OAuth, and
+                       native.rs: the iPhone app's own player (rodio + symphonia) in mpv's place
   library/             SQLite store, incremental tag scanner and tag writer (lofty), M3U import/export
   providers/           Spotify (session + Web API), SoundCloud api-v2, Apple Music (XML + catalog API), YouTube (yt-dlp)
   integrations/        lyrics (LRC/LRCLIB/Genius), Genius song details, Last.fm (scrobbling, profile stats),
-                       Discord RPC, MPRIS, notifications
+                       Discord RPC, MPRIS, notifications, ios.rs (audio session, lock screen)
   ui/                  egui pages (views/), theme, color and holiday themes (themes.rs, holiday.rs),
                        widgets, cover art cache
 ```

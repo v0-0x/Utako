@@ -61,8 +61,17 @@ const REPLAYGAIN_FALLBACK_DB: f32 = -6.0;
 const TICK: Duration = Duration::from_millis(15);
 
 enum Cmd {
-    Open { entry: i64, path: PathBuf, start: f64 },
-    Append { entry: i64, path: PathBuf },
+    Open {
+        entry: i64,
+        path: PathBuf,
+        start: f64,
+    },
+    /// `after`: the entry it goes after; dropped if another song was asked for since.
+    Append {
+        entry: i64,
+        after: i64,
+        path: PathBuf,
+    },
     ClearUpcoming,
     Pause(bool),
     Seek(f64),
@@ -87,6 +96,9 @@ pub struct Mpv {
     events: MpvSender,
     now: Arc<Mutex<Now>>,
     next_entry: AtomicI64,
+    /// The entry playing (or asked for last with [`Mpv::load`]); the player thread moves it on
+    /// when it continues into an appended song.
+    playing: Arc<AtomicI64>,
     /// The download of the song asked for last, and of the one appended after it.
     loading: Mutex<Option<tokio::task::JoinHandle<()>>>,
     appending: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -98,10 +110,12 @@ impl Mpv {
         let mixer = mixer().ok_or_else(|| anyhow!("no audio output"))?;
         let (commands, inbox) = std_mpsc::channel();
         let now = Arc::new(Mutex::new(Now::default()));
+        let playing = Arc::new(AtomicI64::new(0));
         let player = Player {
             id,
             events: events.clone(),
             now: now.clone(),
+            playing: playing.clone(),
             sink: rodio::Sink::connect_new(&mixer),
             volume: opts.volume,
             replaygain: opts.replaygain,
@@ -118,6 +132,7 @@ impl Mpv {
             events,
             now,
             next_entry: AtomicI64::new(1),
+            playing,
             loading: Mutex::new(None),
             appending: Mutex::new(None),
         })
@@ -144,6 +159,7 @@ impl Mpv {
     /// Plays `url` (a file or a stream) from `start` seconds, replacing what plays.
     pub async fn load(&self, url: &str, start: f64) -> Result<()> {
         let entry = self.next_entry.fetch_add(1, Ordering::Relaxed);
+        self.playing.store(entry, Ordering::Relaxed);
         let _ = self.events.send((
             self.id,
             MpvEvent::StartFile {
@@ -163,7 +179,8 @@ impl Mpv {
     /// Adds `url` to play right after the current song.
     pub async fn append(&self, url: &str) -> Result<()> {
         let entry = self.next_entry.fetch_add(1, Ordering::Relaxed);
-        let task = self.fetch(url, entry, |entry, path| Cmd::Append { entry, path });
+        let after = self.playing.load(Ordering::Relaxed);
+        let task = self.fetch(url, entry, move |entry, path| Cmd::Append { entry, after, path });
         if let Some(old) = self.appending.lock().unwrap().replace(task) {
             old.abort();
         }
@@ -390,6 +407,7 @@ struct Player {
     id: u64,
     events: MpvSender,
     now: Arc<Mutex<Now>>,
+    playing: Arc<AtomicI64>,
     sink: rodio::Sink,
     volume: f32,
     replaygain: bool,
@@ -445,8 +463,10 @@ impl Player {
                     }
                 }
             }
-            Cmd::Append { entry, path } => {
-                if self.current.is_none() {
+            Cmd::Append { entry, after, path } => {
+                // Appended after a song that has since been replaced: not wanted any more.
+                if self.current.as_ref().map(|(e, _)| *e) != Some(after) {
+                    remove_stream(&path);
                     return;
                 }
                 match open(&path, self.replaygain) {
@@ -512,6 +532,7 @@ impl Player {
         );
         self.sink.append(song.source);
         self.forget_files(Some(&path));
+        self.playing.store(entry, Ordering::Relaxed);
         self.current = Some((entry, path));
         self.emit(MpvEvent::FileLoaded);
         if let Some(d) = song.duration {

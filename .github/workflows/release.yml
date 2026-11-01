@@ -465,10 +465,18 @@ jobs:
           path: dist/*.pkg.tar.zst
           if-no-files-found: error
 
+  # The iPhone and iPad app, built (and tried in the simulator) by ios.yml.
+  ios:
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    uses: ./.github/workflows/ios.yml
+    with:
+      release: true
+
   release:
-    needs: [version, windows, macos, arch]
+    needs: [version, windows, macos, arch, ios]
     # The Arch job runs the tests (the PKGBUILD's check()): nothing is published when they fail.
-    if: ${{ !cancelled() && needs.windows.result == 'success' && needs.macos.result == 'success' && needs.arch.result == 'success' }}
+    if: ${{ !cancelled() && needs.windows.result == 'success' && needs.macos.result == 'success' && needs.arch.result == 'success' && needs.ios.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -504,6 +512,7 @@ jobs:
           - **Windows 10/11:** run \`Sumo-Setup-$VERSION-x64.exe\`. It installs for your user (no administrator prompt) with everything Sumo needs (mpv, yt-dlp, ffmpeg).
           - **macOS 11+:** open the \`.dmg\` for your Mac (**arm64** for Apple Silicon M1/M2/M3/M4, **intel** for Intel Macs) and drag Sumo to Applications. The app isn't notarized by Apple, so the first time: right-click Sumo → Open → Open (or System Settings → Privacy & Security → Open Anyway).
           - **Arch Linux (x86_64):** \`sudo pacman -U multimusic-*-x86_64.pkg.tar.zst\`, or build from the repository with \`makepkg -si\`.
+          - **iPhone and iPad (iOS 15+):** install \`Sumo-$VERSION-ios.ipa\` with Sideloadly or AltStore (signed with your Apple ID; a free one needs signing again every 7 days) or TrollStore. Put music in the Files app under On My iPhone › Sumo.
 
           Sumo checks for updates by itself and installs them with one click.
           EOF
