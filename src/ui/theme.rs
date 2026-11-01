@@ -341,6 +341,11 @@ fn font_dirs() -> Vec<PathBuf> {
         }
         return dirs;
     }
+    // iOS: Inter comes in the app; the system's fonts are a fallback for symbols and CJK.
+    if cfg!(target_os = "ios") {
+        dirs.push(PathBuf::from("/System/Library/Fonts"));
+        return dirs;
+    }
     if cfg!(target_os = "macos") {
         dirs.push(PathBuf::from("/System/Library/Fonts"));
         dirs.push(PathBuf::from("/Library/Fonts"));

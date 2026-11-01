@@ -3,6 +3,27 @@
 
 pub use os::Mpris;
 
+/// iOS: nothing yet; the lock screen's controls come with the iPhone app's audio session.
+#[cfg(target_os = "ios")]
+mod os {
+    use tokio::sync::mpsc::UnboundedSender;
+
+    use crate::model::Track;
+    use crate::service::Command;
+
+    pub struct Mpris;
+
+    impl Mpris {
+        pub fn new(_commands: UnboundedSender<Command>, _window: Option<isize>) -> Mpris {
+            Mpris
+        }
+
+        pub fn update(&mut self, _track: Option<&Track>, _playing: bool, _position: f64) {}
+
+        pub fn set_volume(&mut self, _volume: f32) {}
+    }
+}
+
 /// Windows and macOS: souvlaki talks to the system.
 #[cfg(any(windows, target_os = "macos"))]
 mod os {
@@ -107,7 +128,7 @@ mod os {
 }
 
 /// Linux: MPRIS over D-Bus, served on the app's own runtime.
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
 mod os {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};

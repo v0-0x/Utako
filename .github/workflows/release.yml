@@ -19,6 +19,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "assets/**"
+      - "patches/**"
       - "packaging/**"
       - "PKGBUILD"
       - ".github/workflows/release.yml"

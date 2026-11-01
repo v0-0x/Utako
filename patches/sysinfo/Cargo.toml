@@ -1,0 +1,23 @@
+# A stand-in for sysinfo 0.36, the version librespot-core asks for. That version doesn't build
+# for iOS (it calls functions the libc crate only offers on macOS), and librespot only needs
+# two of its answers: the OS and kernel versions it reports to Spotify. On the desktops they
+# come from the real sysinfo, a newer version; on iOS from sysctl.
+[package]
+name = "sysinfo"
+version = "0.36.1"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+system = []
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+upstream = { package = "sysinfo", version = "0.37", default-features = false, features = ["system"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+libc = "0.2"

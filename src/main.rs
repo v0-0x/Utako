@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
     if instance::running_elsewhere() {
         return Ok(());
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "ios")))]
     if instance::running_elsewhere(&paths) {
         tracing::info!("Sumo is already running: showing that one");
         return Ok(());
@@ -81,7 +81,7 @@ fn main() -> anyhow::Result<()> {
     let (cmd, service) = service::start(rt.handle().clone(), shared.clone(), paths.clone(), cfg.clone());
     #[cfg(windows)]
     instance::listen(rt.handle(), cmd.clone());
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "ios")))]
     instance::listen(rt.handle(), &paths, cmd.clone());
 
     // The window opens as big as it was left (where is up to the system, which knows the
@@ -136,10 +136,10 @@ fn main() -> anyhow::Result<()> {
     result.map_err(|e| anyhow!("{e}"))
 }
 
-/// The log file used where there is no terminal to log to (the Windows and macOS apps).
+/// The log file used where there is no terminal to log to (the Windows, macOS and iOS apps).
 fn log_file(paths: &Paths) -> Option<std::fs::File> {
     use std::io::IsTerminal;
-    if !cfg!(any(windows, target_os = "macos")) || std::io::stderr().is_terminal() {
+    if !cfg!(any(windows, target_os = "macos", target_os = "ios")) || std::io::stderr().is_terminal() {
         return None;
     }
     std::fs::File::create(paths.data_dir.join("multimusic.log")).ok()
@@ -208,8 +208,8 @@ mod instance {
 }
 
 /// One Sumo at a time on Linux and macOS too: a second start asks the first to show itself,
-/// through a socket in the user's own runtime folder.
-#[cfg(unix)]
+/// through a socket in the user's own runtime folder. (iOS keeps one copy of an app itself.)
+#[cfg(all(unix, not(target_os = "ios")))]
 mod instance {
     use std::path::PathBuf;
 

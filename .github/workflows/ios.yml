@@ -1,0 +1,121 @@
+# The iPhone and iPad app: an unsigned .ipa, installed with Sideloadly or AltStore (which sign
+# it with your Apple ID) or TrollStore. Every run also starts the app in the iOS simulator and
+# keeps a screenshot and its log, so a change can be seen working without an iPhone.
+name: iOS
+
+on:
+  push:
+    branches: [claude/pensive-gauss-j8jclj]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "assets/**"
+      - "patches/**"
+      - "packaging/ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-15
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+      BUNDLE_ID: io.github.simo1337s.multimusic
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Version
+        run: echo "VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_ENV"
+
+      - run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ios
+
+      - name: Build for the simulator
+        run: cargo build --release --locked --no-default-features --target aarch64-apple-ios-sim
+
+      - name: Build for iPhone and iPad
+        run: cargo build --release --locked --no-default-features --target aarch64-apple-ios
+
+      - name: Fetch Inter
+        run: |
+          set -euo pipefail
+          mkdir -p dl fonts
+          curl -fsSL -o dl/inter.zip https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+          echo "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e  dl/inter.zip" | shasum -a 256 -c -
+          unzip -q -j dl/inter.zip extras/ttf/Inter-Regular.ttf extras/ttf/Inter-SemiBold.ttf -d fonts
+
+      - name: Build the apps
+        run: |
+          set -euo pipefail
+          bundle() { # target platform out
+            app="$3/Sumo.app"
+            mkdir -p "$app/fonts"
+            cp "target/$1/release/multimusic" "$app/"
+            sed -e "s/@VERSION@/$VERSION/g" -e "s/@PLATFORM@/$2/g" packaging/ios/Info.plist > "$app/Info.plist"
+            plutil -lint "$app/Info.plist"
+            cp fonts/*.ttf "$app/fonts/"
+            cp LICENSE packaging/THIRD-PARTY.txt "$app/"
+            # Home screen icons (iPhone @2x/@3x, iPad @1x/@2x, iPad Pro).
+            for spec in 60x60@2x:120 60x60@3x:180 76x76:76 76x76@2x:152 83.5x83.5@2x:167; do
+              name="AppIcon${spec%%:*}"
+              size="${spec##*:}"
+              sips -z "$size" "$size" assets/icon-256.png --out "$app/$name~ipad.png" > /dev/null
+              cp "$app/$name~ipad.png" "$app/$name.png"
+            done
+            printf 'APPL????' > "$app/PkgInfo"
+            codesign --force --sign - --timestamp=none "$app"
+          }
+          bundle aarch64-apple-ios-sim iPhoneSimulator sim
+          bundle aarch64-apple-ios iPhoneOS device
+          mkdir -p dist Payload
+          cp -R device/Sumo.app Payload/
+          zip -qry "dist/Sumo-$VERSION-ios.ipa" Payload
+          ls -l dist
+
+      - name: Start it in the simulator
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available -j \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k in sorted(d, reverse=True) if "iOS" in k for x in d[k] if x["name"].startswith("iPhone")))')
+          echo "simulator: $udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" sim/Sumo.app
+          xcrun simctl launch "$udid" "$BUNDLE_ID"
+          sleep 25
+          mkdir -p shots
+          xcrun simctl io "$udid" screenshot shots/1-start.png
+          data=$(xcrun simctl get_app_container "$udid" "$BUNDLE_ID" data)
+          log="$data/Library/Application Support/multimusic/multimusic.log"
+          cp "$log" shots/multimusic.log 2>/dev/null || echo "no log at $log"
+          cat shots/multimusic.log 2>/dev/null || true
+          # Still running after 25 s: it started and didn't crash.
+          if ! xcrun simctl spawn "$udid" launchctl list | grep -q "$BUNDLE_ID"; then
+            echo "::error::Sumo isn't running in the simulator"
+            ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | tail -5 || true
+            exit 1
+          fi
+          echo "Sumo is running in the simulator"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ios
+          path: |
+            dist/*.ipa
+            shots/
+          if-no-files-found: warn

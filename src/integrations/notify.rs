@@ -2,7 +2,7 @@
 //! (Linux). Each one replaces the last, so they don't pile up. Windows and macOS show the
 //! playing song in their own media overlays instead.
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
 pub fn song(title: &str, artist: &str, album: &str) {
     use std::collections::HashMap;
     use zbus::zvariant::Value;
@@ -59,11 +59,11 @@ pub fn song(title: &str, artist: &str, album: &str) {
     });
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "ios"))]
 pub fn song(_title: &str, _artist: &str, _album: &str) {}
 
 /// Notification bodies may hold a little markup: song names are shown as written.
-#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+#[cfg_attr(any(windows, target_os = "macos", target_os = "ios"), allow(dead_code))]
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }

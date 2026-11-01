@@ -4,10 +4,10 @@ version = "0.7.0"
 edition = "2021"
 description = "A fast, lightweight, native music player for local files, Spotify and SoundCloud"
 license = "MIT"
-rust-version = "1.87"
+rust-version = "1.88"
 
 [dependencies]
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts"] }
 egui = "0.36"
 egui-phosphor = { version = "0.14", features = ["regular", "fill"] }
 librespot-core = { version = "0.8", default-features = false, features = ["native-tls"] }
@@ -42,6 +42,17 @@ base64 = "0.22"
 futures-util = "0.3"
 raw-window-handle = "0.6"
 
+# Desktops draw with OpenGL; iOS has no OpenGL to speak of, so the iPhone app draws with Metal
+# (through wgpu).
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["glow", "wayland", "x11"] }
+
+# iOS: mpv can't run there (an app may not start other programs), so local files and
+# SoundCloud streams play through rodio and symphonia inside the app.
+[target.'cfg(target_os = "ios")'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
+rodio = { version = "0.21", default-features = false, features = ["playback", "symphonia-mp3", "symphonia-flac", "symphonia-vorbis", "symphonia-ogg", "symphonia-wav", "symphonia-aiff", "symphonia-pcm", "symphonia-aac", "symphonia-isomp4", "symphonia-alac"] }
+
 # Windows and macOS: their media overlays and keys (souvlaki), and their file pickers (rfd).
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 souvlaki = { version = "0.8", default-features = false }
@@ -49,7 +60,7 @@ rfd = { version = "0.15", default-features = false }
 pollster = "0.4"
 
 # Linux: media controls (MPRIS), notifications and the file picker portal over D-Bus.
-[target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
+[target.'cfg(not(any(windows, target_os = "macos", target_os = "ios")))'.dependencies]
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -79,3 +90,7 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# librespot-core's sysinfo doesn't build for iOS; see patches/sysinfo/Cargo.toml.
+[patch.crates-io]
+sysinfo = { path = "patches/sysinfo" }
