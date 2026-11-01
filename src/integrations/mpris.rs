@@ -3,22 +3,25 @@
 
 pub use os::Mpris;
 
-/// iOS: nothing yet; the lock screen's controls come with the iPhone app's audio session.
+/// iOS: the lock screen, Control Center and headphone buttons (see integrations/ios.rs).
 #[cfg(target_os = "ios")]
 mod os {
     use tokio::sync::mpsc::UnboundedSender;
 
+    use crate::integrations::ios::NowPlaying;
     use crate::model::Track;
     use crate::service::Command;
 
-    pub struct Mpris;
+    pub struct Mpris(NowPlaying);
 
     impl Mpris {
-        pub fn new(_commands: UnboundedSender<Command>, _window: Option<isize>) -> Mpris {
-            Mpris
+        pub fn new(commands: UnboundedSender<Command>, _window: Option<isize>) -> Mpris {
+            Mpris(NowPlaying::new(commands))
         }
 
-        pub fn update(&mut self, _track: Option<&Track>, _playing: bool, _position: f64) {}
+        pub fn update(&mut self, track: Option<&Track>, playing: bool, position: f64) {
+            self.0.update(track, playing, position);
+        }
 
         pub fn set_volume(&mut self, _volume: f32) {}
     }

@@ -68,6 +68,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     let cfg = Config::load(&paths);
+    // Playback that goes on with the screen locked; set before any audio is opened.
+    #[cfg(target_os = "ios")]
+    integrations::ios::start_audio_session();
 
     // Two workers are plenty: everything heavy is IO bound or runs in mpv/librespot threads.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -83,6 +86,17 @@ fn main() -> anyhow::Result<()> {
     instance::listen(rt.handle(), cmd.clone());
     #[cfg(all(unix, not(target_os = "ios")))]
     instance::listen(rt.handle(), &paths, cmd.clone());
+    // The simulator build plays a file named in SUMO_PLAY at once: how the iOS workflow hears
+    // the built-in player work without anyone tapping.
+    #[cfg(all(target_os = "ios", target_abi = "sim"))]
+    if let Some(path) = std::env::var_os("SUMO_PLAY").map(std::path::PathBuf::from) {
+        let track = library::scanner::read_track(&path, None, 0);
+        let _ = cmd.send(Command::Play {
+            tracks: vec![track],
+            start: 0,
+            context: "Test".into(),
+        });
+    }
 
     // The window opens as big as it was left (where is up to the system, which knows the
     // screens there are now).

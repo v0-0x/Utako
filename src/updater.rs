@@ -39,6 +39,9 @@ pub struct Asset {
 pub fn is_platform_asset(name: &str, version: &str) -> bool {
     if cfg!(windows) {
         name == format!("Sumo-Setup-{version}-x64.exe")
+    } else if cfg!(target_os = "ios") {
+        // Shown, not installed: iOS apps can't replace themselves.
+        name == format!("Sumo-{version}-ios.ipa")
     } else if cfg!(target_os = "macos") {
         let arch = if cfg!(target_arch = "aarch64") {
             "arm64"

@@ -26,11 +26,20 @@ pub struct Config {
     pub updates: UpdatesConfig,
 }
 
+/// The music folder Sumo starts with: the system's, or on iOS Sumo's own Documents folder,
+/// the one the Files app shows as On My iPhone › Sumo.
+pub fn default_music_dir() -> Option<PathBuf> {
+    let user = directories::UserDirs::new();
+    if cfg!(target_os = "ios") {
+        return user.and_then(|u| u.document_dir().map(Path::to_path_buf));
+    }
+    user.and_then(|u| u.audio_dir().map(Path::to_path_buf))
+        .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().join("Music")))
+}
+
 impl Default for Config {
     fn default() -> Self {
-        let music_dir = directories::UserDirs::new()
-            .and_then(|u| u.audio_dir().map(Path::to_path_buf))
-            .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().join("Music")));
+        let music_dir = default_music_dir();
         Config {
             library: LibraryConfig {
                 folders: music_dir.into_iter().collect(),

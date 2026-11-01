@@ -595,11 +595,12 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
                                 cx.actions.push(Action::Cmd(Command::InstallUpdate));
                             }
                         } else {
-                            ui.label(
-                                egui::RichText::new("Update: cd sumo-music && git pull && makepkg -sif")
-                                    .small()
-                                    .color(pal().text_dim),
-                            );
+                            let how = if cfg!(target_os = "ios") {
+                                "Install its .ipa with Sideloadly or AltStore"
+                            } else {
+                                "Update: cd sumo-music && git pull && makepkg -sif"
+                            };
+                            ui.label(egui::RichText::new(how).small().color(pal().text_dim));
                         }
                         if ui.button("What's new").clicked() {
                             cx.actions.push(Action::OpenUrl(page.clone()));
@@ -670,6 +671,9 @@ pub fn toolbar(ui: &mut Ui, cx: &mut Cx, can_back: bool, can_forward: bool, sear
 /// The player: a floating dock with the transport on the left, the song and its progress in
 /// the middle and the toggles on the right.
 pub fn player_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
+    if ui.ctx().content_rect().width() < PHONE_WIDTH {
+        return phone_dock(ui, cx, right);
+    }
     egui::Panel::bottom("player")
         .exact_size(76.0 + 2.0 * GAP)
         .resizable(false)
@@ -871,6 +875,135 @@ pub fn player_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
                 Pos2::new(rx - 12.0, dock.bottom() - 10.0),
             );
             now_playing(ui, cx, middle);
+        });
+}
+
+/// Narrower than this (a phone held upright), the dock stacks the song over its controls.
+const PHONE_WIDTH: f32 = 600.0;
+
+/// The dock on a phone: the song (with its seek bar and heart) on top, and the controls
+/// underneath, centred, with the queue and lyrics at the sides. Volume is the phone's buttons.
+fn phone_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
+    egui::Panel::bottom("player")
+        .exact_size(118.0 + 2.0 * GAP)
+        .resizable(false)
+        .show_separator_line(false)
+        .frame(
+            egui::Frame::new()
+                .fill(pal().window_bg)
+                .inner_margin(Margin::same(GAP as i8)),
+        )
+        .show(ui, |ui| {
+            let dock = ui.max_rect();
+            ui.painter().rect(
+                dock,
+                CornerRadius::same(18),
+                pal().card,
+                Stroke::new(1.0, theme::mix(pal().hover, pal().selected, 0.35)),
+                egui::StrokeKind::Inside,
+            );
+
+            // Top: the song.
+            let top = Rect::from_min_max(
+                dock.min + vec2(12.0, 8.0),
+                Pos2::new(dock.right() - 10.0, dock.top() + 64.0),
+            );
+            let mut rx = top.right();
+            if let Some(t) = cx.player.current.clone() {
+                let liked = cx.lib.is_liked(&t.id);
+                let tip = if liked {
+                    "Remove from Liked Songs"
+                } else {
+                    "Save to Liked Songs"
+                };
+                let slot = take_slot(&mut rx, top.top() + 26.0, CONTROL);
+                if dock_button(ui, slot, icon::HEART, Look::Like(liked), cx.accent, tip).clicked() {
+                    cx.actions.push(Action::Cmd(Command::ToggleLike(t)));
+                }
+            }
+            now_playing(ui, cx, Rect::from_min_max(top.min, Pos2::new(rx - 6.0, top.bottom())));
+
+            // Bottom: shuffle, previous, play, next, repeat; queue and lyrics at the edges.
+            let cy = dock.bottom() - 30.0;
+            let c = dock.center().x;
+            let at = |x: f32, size: f32| Rect::from_center_size(Pos2::new(x, cy), vec2(size, size));
+            if play_button(ui, at(c, 44.0), cx.accent, cx.player.status == PlayStatus::Playing).clicked() {
+                cx.actions.push(Action::Cmd(Command::TogglePause));
+            }
+            let side = 22.0 + 14.0 + 18.0;
+            if dock_button(
+                ui,
+                at(c - side, 36.0),
+                egui_phosphor::fill::SKIP_BACK,
+                Look::Filled,
+                cx.accent,
+                "Previous",
+            )
+            .clicked()
+            {
+                cx.actions.push(Action::Cmd(Command::Previous));
+            }
+            if dock_button(
+                ui,
+                at(c + side, 36.0),
+                egui_phosphor::fill::SKIP_FORWARD,
+                Look::Filled,
+                cx.accent,
+                "Next",
+            )
+            .clicked()
+            {
+                cx.actions.push(Action::Cmd(Command::Next));
+            }
+            let outer = side + 18.0 + 16.0 + CONTROL / 2.0;
+            let shuffle = cx.player.shuffle;
+            if dock_button(
+                ui,
+                at(c - outer, CONTROL),
+                icon::SHUFFLE,
+                Look::Toggle(shuffle),
+                cx.accent,
+                "Shuffle",
+            )
+            .clicked()
+            {
+                cx.actions.push(Action::Cmd(Command::SetShuffle(!shuffle)));
+            }
+            let (rep_icon, rep_on, rep_tip) = match cx.player.repeat {
+                RepeatMode::Off => (icon::REPEAT, false, "Repeat"),
+                RepeatMode::All => (icon::REPEAT, true, "Repeat one"),
+                RepeatMode::One => (icon::REPEAT_ONCE, true, "Repeat off"),
+            };
+            if dock_button(
+                ui,
+                at(c + outer, CONTROL),
+                rep_icon,
+                Look::Toggle(rep_on),
+                cx.accent,
+                rep_tip,
+            )
+            .clicked()
+            {
+                cx.actions.push(Action::Cmd(Command::CycleRepeat));
+            }
+            let edge = 12.0 + CONTROL / 2.0;
+            for (x, tab, glyph, tip) in [
+                (dock.left() + edge, RightTab::Queue, icon::QUEUE, "Queue"),
+                (dock.right() - edge, RightTab::Lyrics, icon::MICROPHONE_STAGE, "Lyrics"),
+            ] {
+                if dock_button(
+                    ui,
+                    at(x, CONTROL),
+                    glyph,
+                    Look::Toggle(right == Some(tab)),
+                    cx.accent,
+                    tip,
+                )
+                .clicked()
+                {
+                    cx.actions.push(Action::RightTab(tab));
+                }
+            }
         });
 }
 

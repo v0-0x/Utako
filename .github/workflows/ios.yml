@@ -87,19 +87,28 @@ jobs:
           ls -l dist
 
       - name: Start it in the simulator
+        timeout-minutes: 20
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           udid=$(xcrun simctl list devices available -j \
             | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k in sorted(d, reverse=True) if "iOS" in k for x in d[k] if x["name"].startswith("iPhone")))')
           echo "simulator: $udid"
           xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
+          # Waits for the first boot to finish setting up (a few minutes on a fresh runner).
+          xcrun simctl bootstatus "$udid"
           xcrun simctl install "$udid" sim/Sumo.app
-          xcrun simctl launch "$udid" "$BUNDLE_ID"
-          sleep 25
-          mkdir -p shots
-          xcrun simctl io "$udid" screenshot shots/1-start.png
+          # A test song in Sumo's Documents folder (where the Files app puts music): 40 s of
+          # speech as AAC in .m4a, the format of most songs bought or ripped on Apple devices.
           data=$(xcrun simctl get_app_container "$udid" "$BUNDLE_ID" data)
+          mkdir -p "$data/Documents"
+          say -o dl/test.aiff "Sumo is playing this from its own folder on the iPhone. $(printf 'One two three four five. %.0s' 1 2 3 4 5 6)"
+          afconvert -f m4af -d aac dl/test.aiff "$data/Documents/Test song.m4a"
+          SIMCTL_CHILD_SUMO_PLAY="$data/Documents/Test song.m4a" xcrun simctl launch "$udid" "$BUNDLE_ID"
+          mkdir -p shots
+          sleep 12
+          xcrun simctl io "$udid" screenshot shots/1-playing.png
+          sleep 13
+          xcrun simctl io "$udid" screenshot shots/2-later.png
           log="$data/Library/Application Support/multimusic/multimusic.log"
           cp "$log" shots/multimusic.log 2>/dev/null || echo "no log at $log"
           cat shots/multimusic.log 2>/dev/null || true
@@ -110,6 +119,11 @@ jobs:
             exit 1
           fi
           echo "Sumo is running in the simulator"
+          if ! grep -q "player: playing Test song.m4a" shots/multimusic.log; then
+            echo "::error::the built-in player didn't play the test song"
+            exit 1
+          fi
+          echo "The built-in player played the test song"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

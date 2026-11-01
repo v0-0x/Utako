@@ -96,7 +96,17 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 if let Some(i) = remove {
                     cfg.library.folders.remove(i);
                 }
+                if cfg!(target_os = "ios") {
+                    hint(
+                        ui,
+                        "Copy music into Sumo's folder in the Files app (On My iPhone › Sumo), from a computer \
+                         with Finder or iTunes, or from iCloud Drive, then Rescan now.",
+                    );
+                }
                 ui.horizontal(|ui| {
+                    if cfg!(target_os = "ios") {
+                        return;
+                    }
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut st.new_folder)
                             .hint_text("~/Music  (or drop a folder onto the window)")
@@ -321,8 +331,10 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                      downloads show up in Local Files too.",
                 );
                 ui.add_space(6.0);
-                ui.checkbox(&mut cfg.downloads.youtube, "Find Spotify and Apple Music songs on YouTube");
-                if cfg.downloads.youtube {
+                if !cfg!(target_os = "ios") {
+                    ui.checkbox(&mut cfg.downloads.youtube, "Find Spotify and Apple Music songs on YouTube");
+                }
+                if cfg.downloads.youtube && !cfg!(target_os = "ios") {
                     text_field(ui, "yt-dlp program", &mut cfg.downloads.ytdlp_path, "yt-dlp", false);
                     let green = Color32::from_rgb(0x4a, 0xd6, 0x8a);
                     match widgets::ytdlp_status(ui, cx, &cfg.downloads.ytdlp_path) {
@@ -450,6 +462,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
             });
 
             // ---------------------------------------------------------- discord
+            #[cfg(not(target_os = "ios"))]
             section(ui, icon::DISCORD_LOGO, Color32::from_rgb(0x58, 0x65, 0xf2), "Discord Rich Presence", |ui| {
                 ui.checkbox(&mut cfg.discord.enabled, "Show what I'm listening to on Discord");
                 text_field(ui, "Application ID", &mut cfg.discord.app_id, "e.g. 1234567890123456789", false);
@@ -494,6 +507,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     &mut cfg.lyrics.online,
                     "Fetch lyrics online when there are no local lyrics (LRCLIB, then Genius)",
                 );
+                if !cfg!(target_os = "ios") {
                 text_field(ui, "mpv binary", &mut cfg.playback.mpv_path, "mpv", false);
                 if !st.devices_requested {
                     st.devices_requested = true;
@@ -544,7 +558,16 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                          you allow more rates (see the README)."
                     },
                 );
-                hint(ui, "Local files and SoundCloud play through mpv; Spotify plays through librespot (max 320 kbps Ogg Vorbis).");
+                }
+                hint(
+                    ui,
+                    if cfg!(target_os = "ios") {
+                        "Local files and SoundCloud play in Sumo's own player; Spotify plays through librespot \
+                         (max 320 kbps Ogg Vorbis). iOS chooses the output: speaker, headphones, Bluetooth or AirPlay."
+                    } else {
+                        "Local files and SoundCloud play through mpv; Spotify plays through librespot (max 320 kbps Ogg Vorbis)."
+                    },
+                );
             });
 
             // ---------------------------------------------------------- appearance

@@ -1,5 +1,7 @@
 pub mod discord;
 pub mod genius;
+#[cfg(target_os = "ios")]
+pub mod ios;
 pub mod lastfm;
 pub mod lastfm_stats;
 pub mod lyrics;

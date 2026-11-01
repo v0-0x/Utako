@@ -1218,6 +1218,45 @@ fn parse_hls(text: &str, base: &str) -> Result<Hls> {
     Ok(Hls { init, segments })
 }
 
+/// Saves a stream to `path` for the iPhone app's player, which plays files: a progressive
+/// file as it is, an HLS playlist as its segments joined together.
+#[cfg(target_os = "ios")]
+pub(crate) async fn save_stream(http: &reqwest::Client, url: &str, path: &Path) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let resp = http
+        .get(url)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await
+        .context("the stream didn't answer")?
+        .error_for_status()?;
+    let is_playlist = url.split('?').next().is_some_and(|u| u.ends_with(".m3u8"))
+        || resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|t| t.contains("mpegurl"));
+    if !is_playlist {
+        return save_body(http, url, path, &|_| {}).await;
+    }
+    let playlist = resp.text().await?;
+    let hls = parse_hls(&playlist, url)?;
+    let mut file = tokio::fs::File::create(path).await?;
+    for segment in hls.init.iter().chain(hls.segments.iter()) {
+        let bytes = http
+            .get(segment)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        file.write_all(&bytes).await?;
+    }
+    file.flush().await?;
+    Ok(())
+}
+
 /// Streams a response body into `path`, reporting progress when the size is known.
 async fn save_body(
     http: &reqwest::Client,
@@ -1359,6 +1398,17 @@ pub fn save_unique(file: &Path, dir: &Path, stem: &str, ext: &str) -> std::io::R
 /// else. ("Progressive" MP3s are often still listed but gone.) Previews come after every full
 /// stream, and DRM encrypted streams are never used.
 fn ranked_transcodings(transcodings: &[Value]) -> Vec<&Value> {
+    // The iPhone app's player has no Opus decoder: MP3, then AAC.
+    if cfg!(target_os = "ios") {
+        return rank_transcodings(transcodings, |protocol, mime| {
+            Some(match (protocol, mime) {
+                ("hls", m) if m.starts_with("audio/mpeg") => 0,
+                ("progressive", m) if m.starts_with("audio/mpeg") => 1,
+                ("hls", m) if m.starts_with("audio/mp4") => 2,
+                _ => 3,
+            })
+        });
+    }
     rank_transcodings(transcodings, |protocol, mime| {
         Some(match (protocol, mime) {
             ("hls", m) if m.starts_with("audio/mpeg") => 0,

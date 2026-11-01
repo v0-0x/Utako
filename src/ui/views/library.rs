@@ -383,8 +383,8 @@ pub(super) fn playlist_actions(ui: &mut Ui, cx: &mut Cx, p: &Playlist) {
     if p.track_ids.iter().any(|id| id.starts_with("local:"))
         && widgets::icon_button(ui, icon::EXPORT, 22.0, pal().text_dim, "Export local songs as .m3u").clicked()
     {
-        let dir = directories::UserDirs::new()
-            .and_then(|u| u.audio_dir().map(|d| d.to_path_buf()))
+        let dir = crate::config::default_music_dir()
+            .filter(|d| d.is_dir())
             .unwrap_or_else(std::env::temp_dir);
         let safe: String = p
             .name

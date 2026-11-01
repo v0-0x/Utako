@@ -51,6 +51,9 @@ eframe = { version = "0.36", default-features = false, features = ["glow", "wayl
 # SoundCloud streams play through rodio and symphonia inside the app.
 [target.'cfg(target_os = "ios")'.dependencies]
 eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
+# The audio session and the lock screen's Now Playing, through plain Objective-C messages.
+objc2 = "0.6"
+block2 = "0.6"
 rodio = { version = "0.21", default-features = false, features = ["playback", "symphonia-mp3", "symphonia-flac", "symphonia-vorbis", "symphonia-ogg", "symphonia-wav", "symphonia-aiff", "symphonia-pcm", "symphonia-aac", "symphonia-isomp4", "symphonia-alac"] }
 
 # Windows and macOS: their media overlays and keys (souvlaki), and their file pickers (rfd).

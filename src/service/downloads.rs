@@ -96,8 +96,8 @@ impl Service {
                 lyrics: d.lyrics.then(|| self.lyrics.clone()),
                 spotify,
                 spotify_twin,
-                ytdlp: d
-                    .youtube
+                // iOS can't run yt-dlp: Spotify and Apple Music songs come from SoundCloud there.
+                ytdlp: (d.youtube && !cfg!(target_os = "ios"))
                     .then(|| YtDlp::new(&d.ytdlp_path, &d.ytdlp_args).with_mp3(d.youtube_mp3)),
             };
             let dir = self.cfg.download_dir(track.source);
