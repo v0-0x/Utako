@@ -29,7 +29,7 @@ use crate::player::spotify::{self, SpotifyAuth, SpotifyDeck, SpotifyEngine, Spot
 use crate::providers::apple_music::{self, AppleMusicApi};
 use crate::providers::soundcloud::{self, ScResolved, ScUser, SoundCloud};
 use crate::providers::spotify_api::{self, SpotifyApi, SpotifyPlaylistMeta};
-use crate::providers::youtube::YtDlp;
+use crate::providers::youtube::{self, YtDlp};
 
 mod downloads;
 mod pages;
@@ -315,6 +315,8 @@ pub struct SearchState {
     pub query: String,
     pub spotify: Vec<Track>,
     pub soundcloud: Vec<Track>,
+    /// Music videos from YouTube (through yt-dlp).
+    pub youtube: Vec<Track>,
     /// Spotify artists and SoundCloud profiles, best matches first.
     pub artists: Vec<ArtistHit>,
     /// Albums and public playlists from Spotify and SoundCloud.
@@ -322,12 +324,13 @@ pub struct SearchState {
     pub playlists: Vec<CollectionHit>,
     pub spotify_pending: bool,
     pub soundcloud_pending: bool,
+    pub youtube_pending: bool,
     pub errors: Vec<String>,
 }
 
 impl SearchState {
     pub fn pending(&self) -> bool {
-        self.spotify_pending || self.soundcloud_pending
+        self.spotify_pending || self.soundcloud_pending || self.youtube_pending
     }
 }
 
@@ -518,6 +521,8 @@ enum Internal {
         seq: u64,
         track: Track,
         url: String,
+        /// mpv options for this file only (a YouTube video's picture and window).
+        opts: Vec<(&'static str, String)>,
     },
     Resolved {
         seq: u64,
@@ -1775,10 +1780,10 @@ impl Service {
                 };
                 Box::pin(self.handle(cmd)).await;
             }
-            Internal::StreamReady { seq, track, url } => {
+            Internal::StreamReady { seq, track, url, opts } => {
                 if seq == self.load_seq {
                     let start = self.position;
-                    self.start_mpv(track, &url, start).await;
+                    self.start_mpv_with(track, &url, start, &opts).await;
                 }
             }
             Internal::Resolved {
@@ -1969,6 +1974,7 @@ impl Service {
                 if search.query == query && seq == self.search_seq {
                     match (source, tracks) {
                         (Source::Spotify, Ok(t)) => search.spotify = t,
+                        (Source::YouTube, Ok(t)) => search.youtube = t,
                         (_, Ok(t)) => search.soundcloud = t,
                         (Source::Spotify, Err(e)) => {
                             search.errors.push(format!("Spotify: {}", friendly_spotify_error(&e)))
@@ -1979,6 +1985,7 @@ impl Service {
                     }
                     match source {
                         Source::Spotify => search.spotify_pending = false,
+                        Source::YouTube => search.youtube_pending = false,
                         _ => search.soundcloud_pending = false,
                     }
                     search.artists.extend(artists);

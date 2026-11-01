@@ -231,10 +231,15 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
         let empty: Vec<Track> = Vec::new();
         let spotify = if fresh { &search.spotify } else { &empty };
         let soundcloud = if fresh { &search.soundcloud } else { &empty };
-        // A Spotify or SoundCloud song you played is in the library too: listed once, as the
-        // service's result.
-        let remote: std::collections::HashSet<&str> =
-            spotify.iter().chain(soundcloud.iter()).map(|t| t.id.as_str()).collect();
+        let youtube = if fresh { &search.youtube } else { &empty };
+        // A Spotify or SoundCloud song (or YouTube video) you played is in the library too:
+        // listed once, as the service's result.
+        let remote: std::collections::HashSet<&str> = spotify
+            .iter()
+            .chain(soundcloud.iter())
+            .chain(youtube.iter())
+            .map(|t| t.id.as_str())
+            .collect();
         let local: Vec<&Track> = st
             .search_cache
             .2
@@ -244,6 +249,7 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             .collect();
         let spotify_pending = !fresh || search.spotify_pending;
         let soundcloud_pending = !fresh || search.soundcloud_pending;
+        let youtube_pending = fresh && search.youtube_pending;
 
         // Artists: Spotify and SoundCloud first (their pages have everything), then the
         // library's own.
@@ -386,6 +392,7 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
         };
         let spotify_error = error_for("Spotify: ");
         let soundcloud_error = error_for("SoundCloud: ");
+        let youtube_error = error_for("YouTube: ");
         if cx.feed.spotify_logged_in {
             widgets::heading_icon(ui, icon::SPOTIFY_LOGO, source_color(Source::Spotify), "Spotify");
             if let (true, Some(e)) = (spotify.is_empty(), &spotify_error) {
@@ -433,21 +440,42 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
                 widgets::track_table(ui, cx, &refs, &opts, viewport, origin);
             }
         }
+        if !youtube.is_empty() || youtube_pending || youtube_error.is_some() {
+            ui.add_space(16.0);
+            widgets::heading_icon(ui, icon::YOUTUBE_LOGO, source_color(Source::YouTube), "Music videos");
+            if let (true, Some(e)) = (youtube.is_empty(), &youtube_error) {
+                search_error(ui, e);
+            } else if youtube.is_empty() {
+                remote_status(ui, youtube_pending);
+            } else {
+                let refs: Vec<&Track> = youtube.iter().collect();
+                let opts = TableOpts {
+                    id: "s-yt",
+                    context: &ctx_name,
+                    playlist: None,
+                    show_album: false,
+                    show_header: false,
+                };
+                widgets::track_table(ui, cx, &refs, &opts, viewport, origin);
+            }
+        }
         if fresh {
             // Errors not shown in a section above (e.g. while results are still listed).
             for e in &search.errors {
                 let shown = (e.starts_with("Spotify: ") && spotify.is_empty() && cx.feed.spotify_logged_in)
-                    || (e.starts_with("SoundCloud: ") && soundcloud.is_empty());
+                    || (e.starts_with("SoundCloud: ") && soundcloud.is_empty())
+                    || (e.starts_with("YouTube: ") && youtube.is_empty());
                 if !shown {
                     ui.label(egui::RichText::new(e).small().color(DANGER));
                 }
             }
         }
-        let pending = spotify_pending || soundcloud_pending;
+        let pending = spotify_pending || soundcloud_pending || youtube_pending;
         if !any
             && local.is_empty()
             && spotify.is_empty()
             && soundcloud.is_empty()
+            && youtube.is_empty()
             && albums.is_empty()
             && playlists.is_empty()
             && !pending

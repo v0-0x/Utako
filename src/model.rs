@@ -11,6 +11,8 @@ pub enum Source {
     /// Imported from Apple Music. Apple Music streams are DRM protected and can't be
     /// played on Linux, so these are resolved to a local/Spotify/SoundCloud match at play time.
     AppleMusic,
+    /// A YouTube video (music videos): plays through yt-dlp and mpv, with or without its picture.
+    YouTube,
 }
 
 impl Source {
@@ -20,6 +22,7 @@ impl Source {
             Source::Spotify => "spotify",
             Source::SoundCloud => "soundcloud",
             Source::AppleMusic => "applemusic",
+            Source::YouTube => "youtube",
         }
     }
 
@@ -29,6 +32,7 @@ impl Source {
             "spotify" => Source::Spotify,
             "soundcloud" => Source::SoundCloud,
             "applemusic" => Source::AppleMusic,
+            "youtube" => Source::YouTube,
             _ => return None,
         })
     }
@@ -39,6 +43,7 @@ impl Source {
             Source::Spotify => "Spotify",
             Source::SoundCloud => "SoundCloud",
             Source::AppleMusic => "Apple Music",
+            Source::YouTube => "YouTube",
         }
     }
 }
@@ -47,7 +52,8 @@ impl Source {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     /// Globally unique key, prefixed by source:
-    /// `local:/music/a.flac`, `spotify:track:<base62>`, `soundcloud:<numeric id>`, `applemusic:<id>`.
+    /// `local:/music/a.flac`, `spotify:track:<base62>`, `soundcloud:<numeric id>`, `applemusic:<id>`,
+    /// `youtube:<video id>`.
     pub id: String,
     pub source: Source,
     pub title: String,
@@ -59,7 +65,8 @@ pub struct Track {
     /// Cover art: an http(s) URL, or a local path (image file, or audio file with embedded art).
     pub art: Option<String>,
     /// Source specific playback locator:
-    /// local file path, `spotify:track:<id>` URI, SoundCloud permalink URL, or empty for Apple Music.
+    /// local file path, `spotify:track:<id>` URI, SoundCloud permalink URL, the YouTube video's
+    /// watch URL, or empty for Apple Music.
     pub uri: String,
     /// Unix seconds when this was added to the library/playlist (0 = unknown).
     pub added_at: i64,
@@ -92,6 +99,10 @@ impl Track {
 
     pub fn applemusic_id(id: &str) -> String {
         format!("applemusic:{id}")
+    }
+
+    pub fn youtube_id(video: &str) -> String {
+        format!("youtube:{video}")
     }
 
     /// Duration in seconds as f64.

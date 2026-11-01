@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use librespot_core::session::Session;
 use tracing::{info, warn};
 
@@ -65,6 +65,15 @@ impl Downloader {
             Source::Spotify | Source::AppleMusic => {
                 let (path, from) = self.find_and_download(track, work, progress).await?;
                 (path, self.details(track).await, from, false)
+            }
+            Source::YouTube => {
+                let ytdlp = self
+                    .ytdlp
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("saving a YouTube video needs yt-dlp"))?;
+                let id = youtube::video_id(&track.id).ok_or_else(|| anyhow!("not a YouTube video"))?;
+                let path = youtube::download(ytdlp, id, work, progress).await?;
+                (path, self.details(track).await, "YouTube".to_string(), false)
             }
             Source::Local => bail!("this song is already a file on your computer"),
         };

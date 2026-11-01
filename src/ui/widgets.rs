@@ -1361,6 +1361,7 @@ pub fn song_link(t: &Track) -> String {
         }
         Source::SoundCloud => t.uri.starts_with("http").then(|| t.uri.clone()),
         Source::Local => Some(t.uri.clone()),
+        Source::YouTube => Some(t.uri.clone()),
         Source::AppleMusic => None,
     };
     link.unwrap_or_else(|| format!("{} - {}", t.artist, t.title))
@@ -1745,6 +1746,15 @@ pub fn track_menu(ui: &mut Ui, cx: &mut Cx, t: &Track, in_playlist: Option<(Opti
                 if let Some(dir) = std::path::Path::new(&t.uri).parent() {
                     cx.actions.push(Action::OpenUrl(dir.to_string_lossy().to_string()));
                 }
+                ui.close();
+            }
+        }
+        Source::YouTube => {
+            if ui
+                .button(theme::ic(icon::ARROW_SQUARE_OUT, "Open on YouTube"))
+                .clicked()
+            {
+                cx.actions.push(Action::OpenUrl(t.uri.clone()));
                 ui.close();
             }
         }

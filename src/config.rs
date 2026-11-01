@@ -88,6 +88,9 @@ pub struct PlaybackConfig {
     /// saved before there was a choice.
     #[serde(default)]
     pub volume_curve: u8,
+    /// Show a YouTube music video's picture (in mpv's window) while it plays; off plays only
+    /// its sound.
+    pub youtube_video: bool,
 }
 
 /// The volume's loudness curve: 1 = mpv's cubic curve for every source. Before (0), Spotify
@@ -106,6 +109,7 @@ impl Default for PlaybackConfig {
             crossfade: 0.0,
             crossfade_albums: false,
             volume_curve: VOLUME_CURVE,
+            youtube_video: true,
         }
     }
 }

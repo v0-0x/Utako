@@ -50,6 +50,7 @@ pub fn source_color(s: Source) -> Color32 {
         Source::Spotify => Color32::from_rgb(0x1e, 0xd7, 0x60),
         Source::SoundCloud => Color32::from_rgb(0xff, 0x6a, 0x1a),
         Source::AppleMusic => Color32::from_rgb(0xfa, 0x41, 0x5a),
+        Source::YouTube => Color32::from_rgb(0xff, 0x33, 0x33),
     }
 }
 
@@ -60,6 +61,7 @@ pub fn source_icon(s: Source) -> &'static str {
         Source::Spotify => i::SPOTIFY_LOGO,
         Source::SoundCloud => i::SOUNDCLOUD_LOGO,
         Source::AppleMusic => i::APPLE_LOGO,
+        Source::YouTube => i::YOUTUBE_LOGO,
     }
 }
 

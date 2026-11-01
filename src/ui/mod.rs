@@ -81,6 +81,8 @@ pub enum Action {
     /// Holiday themes: "auto", "off" or a holiday's id.
     SetHoliday(String),
     SetHolidayEffects(bool),
+    /// Show or hide a YouTube music video's picture.
+    SetYouTubeVideo(bool),
 }
 
 /// Per-frame context handed to every view.
@@ -104,6 +106,8 @@ pub struct Cx<'a> {
     pub theme: &'a str,
     pub holiday_setting: &'a str,
     pub holiday_effects: bool,
+    /// Whether YouTube music videos show their picture.
+    pub youtube_video: bool,
 }
 
 /// Largest texture egui may make (its glyph atlas grows up to this square).
@@ -447,6 +451,7 @@ impl App {
                 }
                 Action::SetHoliday(h) => self.cfg.ui.holiday = h,
                 Action::SetHolidayEffects(on) => self.cfg.ui.holiday_effects = on,
+                Action::SetYouTubeVideo(on) => self.cfg.playback.youtube_video = on,
             }
         }
         let _ = ctx;
@@ -1143,6 +1148,7 @@ impl eframe::App for App {
                 theme: &theme_id,
                 holiday_setting: &holiday_setting,
                 holiday_effects: self.cfg.ui.holiday_effects,
+                youtube_video: self.cfg.playback.youtube_video,
             };
 
             panels::player_dock(ui, &mut cx, (show_right || overlay).then_some(right_tab));

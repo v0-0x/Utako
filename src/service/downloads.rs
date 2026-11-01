@@ -97,7 +97,8 @@ impl Service {
                 spotify,
                 spotify_twin,
                 // iOS can't run yt-dlp: Spotify and Apple Music songs come from SoundCloud there.
-                ytdlp: (d.youtube && !cfg!(target_os = "ios"))
+                // A YouTube video is saved with yt-dlp whatever the setting.
+                ytdlp: ((d.youtube || track.source == Source::YouTube) && !cfg!(target_os = "ios"))
                     .then(|| YtDlp::new(&d.ytdlp_path, &d.ytdlp_args).with_mp3(d.youtube_mp3)),
             };
             let dir = self.cfg.download_dir(track.source);
@@ -348,6 +349,13 @@ impl Service {
             self.check_updates(true);
         }
 
+        let playing_video = self.playing.as_ref().is_some_and(|t| t.source == Source::YouTube);
+        if old.playback.youtube_video != self.cfg.playback.youtube_video && playing_video {
+            let at = self.current_position();
+            let paused = self.status == PlayStatus::Paused;
+            self.reload_at(at).await;
+            self.pause_wanted = paused;
+        }
         if old.playback != self.cfg.playback {
             for mpv in self.mpv.iter().chain(self.mpv_spare.iter()) {
                 let p = &self.cfg.playback;

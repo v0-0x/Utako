@@ -75,7 +75,12 @@ impl Service {
                 let tx = self.internal_tx.clone();
                 tokio::spawn(async move {
                     let msg = match sc.stream_url(&track).await {
-                        Ok(url) => Internal::StreamReady { seq, track, url },
+                        Ok(url) => Internal::StreamReady {
+                            seq,
+                            track,
+                            url,
+                            opts: Vec::new(),
+                        },
                         Err(e) => Internal::LoadFailed {
                             seq,
                             error: format!("SoundCloud: {e:#}"),
@@ -85,6 +90,7 @@ impl Service {
                 });
             }
             Source::Spotify => self.start_spotify(track, start).await,
+            Source::YouTube => self.start_youtube(track, seq).await,
             Source::AppleMusic => {
                 if let Some(t) = self.cached_resolution(&track) {
                     Box::pin(self.dispatch_resolved(track, Some(t), start)).await;
@@ -220,7 +226,59 @@ impl Service {
         Ok(())
     }
 
+    /// A YouTube music video: yt-dlp finds its streams (with the picture when that is on), then
+    /// mpv plays them.
+    pub(super) async fn start_youtube(&mut self, track: Track, seq: u64) {
+        if cfg!(target_os = "ios") {
+            self.load_failed("YouTube videos need yt-dlp, which can't run on iOS".into())
+                .await;
+            return;
+        }
+        let Some(id) = youtube::video_id(&track.id).map(str::to_owned) else {
+            self.load_failed("This YouTube link isn't a video".into()).await;
+            return;
+        };
+        self.silence_engine().await;
+        let ytdlp = YtDlp::new(&self.cfg.downloads.ytdlp_path, &self.cfg.downloads.ytdlp_args);
+        let video = self.cfg.playback.youtube_video;
+        let tx = self.internal_tx.clone();
+        tokio::spawn(async move {
+            let msg = match youtube::stream(&ytdlp, &id, video).await {
+                Ok(stream) => {
+                    let mut opts = Vec::new();
+                    if let Some(agent) = stream.user_agent {
+                        opts.push(("user-agent", agent));
+                    }
+                    if video {
+                        opts.extend([
+                            ("vid", "auto".to_string()),
+                            ("force-window", "immediate".to_string()),
+                            ("force-media-title", format!("{} – {}", track.artist, track.title)),
+                            // Video needs more read-ahead than the few MB songs get.
+                            ("demuxer-max-bytes", "64MiB".to_string()),
+                        ]);
+                    }
+                    Internal::StreamReady {
+                        seq,
+                        track,
+                        url: stream.url,
+                        opts,
+                    }
+                }
+                Err(e) => Internal::LoadFailed {
+                    seq,
+                    error: format!("YouTube: {e:#}"),
+                },
+            };
+            let _ = tx.send(msg);
+        });
+    }
+
     pub(super) async fn start_mpv(&mut self, track: Track, url: &str, start: f64) {
+        self.start_mpv_with(track, url, start, &[]).await;
+    }
+
+    pub(super) async fn start_mpv_with(&mut self, track: Track, url: &str, start: f64, opts: &[(&str, String)]) {
         if self.engine == Engine::Spotify {
             if let Some(sp) = &self.spotify {
                 sp.stop();
@@ -237,7 +295,7 @@ impl Service {
         let volume = self.start_volume();
         if let Some(mpv) = &self.mpv {
             let _ = mpv.set_volume(volume).await;
-            if let Err(e) = mpv.load(url, start).await {
+            if let Err(e) = mpv.load_with(url, start, opts).await {
                 self.load_failed(format!("mpv: {e:#}")).await;
             }
         }
@@ -390,8 +448,8 @@ impl Service {
                     ..Default::default()
                 });
             }
-            // SoundCloud streams are inspected through mpv once loaded.
-            Source::SoundCloud | Source::AppleMusic => {}
+            // SoundCloud and YouTube streams are inspected through mpv once loaded.
+            Source::SoundCloud | Source::AppleMusic | Source::YouTube => {}
         }
     }
 
@@ -1323,6 +1381,8 @@ pub(super) fn load_lead(source: Source) -> f64 {
         Source::Spotify => 1.5,
         Source::SoundCloud => 2.0,
         Source::AppleMusic => 2.5,
+        // yt-dlp takes a few seconds to find a video's streams.
+        Source::YouTube => 4.0,
     }
 }
 

@@ -120,6 +120,7 @@ impl Mpv {
                 if opts.exclusive { "yes" } else { "no" }
             ))
             .arg(format!("--input-ipc-server={}", socket.display()))
+            .arg(format!("--input-conf={}", video_keys()?.display()))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -243,9 +244,23 @@ impl Mpv {
     }
 
     /// Replaces the playlist with `url` and starts playing at `start` seconds.
-    pub async fn load(&self, url: &str, start: f64) -> Result<()> {
+    /// Plays `url` from `start` seconds, with options that hold only while this file plays (a YouTube
+    /// video's picture and window, say): mpv sets them back when the next file starts.
+    pub async fn load_with(&self, url: &str, start: f64, extra: &[(&str, String)]) -> Result<()> {
+        let mut opts = Vec::new();
         if start > 0.5 {
-            let opt = format!("start={start:.1}");
+            opts.push(format!("start={start:.1}"));
+        }
+        // %<bytes>% quotes a value, so commas and colons in it (links, titles) are kept.
+        opts.extend(
+            extra
+                .iter()
+                .map(|(name, value)| format!("{name}=%{}%{value}", value.len())),
+        );
+        if opts.is_empty() {
+            self.command(json!(["loadfile", url, "replace"])).await?;
+        } else {
+            let opt = opts.join(",");
             // mpv >= 0.38 takes an insertion index before the per-file options; older versions don't.
             if self
                 .command(json!(["loadfile", url, "replace", -1, opt]))
@@ -254,8 +269,6 @@ impl Mpv {
             {
                 self.command(json!(["loadfile", url, "replace", opt])).await?;
             }
-        } else {
-            self.command(json!(["loadfile", url, "replace"])).await?;
         }
         self.set_pause(false).await
     }
@@ -317,6 +330,40 @@ impl Drop for Mpv {
 }
 
 const IPC_PREFIX: &str = "multimusic-mpv-";
+
+/// Keys for a music video's window: closing it (or q) only hides the picture, so the song
+/// plays on. mpv would quit otherwise, and every song with it.
+const VIDEO_KEYS: &str = "\
+CLOSE_WIN set vid no; set force-window no
+q set vid no; set force-window no
+Q set vid no; set force-window no
+ESC set fullscreen no
+f cycle fullscreen
+MBTN_LEFT_DBL cycle fullscreen
+";
+
+/// The key file, in mpv's private socket folder (an input.conf can run programs: nobody else
+/// may write it).
+fn video_keys() -> Result<PathBuf> {
+    use std::io::Write;
+    let path = ipc_dir().join("multimusic-video-keys.conf");
+    let current = || std::fs::read_to_string(&path).ok().as_deref() == Some(VIDEO_KEYS);
+    if current() {
+        return Ok(path);
+    }
+    let _ = std::fs::remove_file(&path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = options.open(&path).and_then(|mut f| f.write_all(VIDEO_KEYS.as_bytes()));
+    // Another player starting at the same moment (a crossfade) may have written it first.
+    match written {
+        Ok(()) => Ok(path),
+        Err(_) if current() => Ok(path),
+        Err(e) => Err(anyhow!(e).context(format!("couldn't write {}", path.display()))),
+    }
+}
 
 /// Where mpv listens for commands: a Unix socket, or a named pipe on Windows.
 fn ipc_path(id: u64) -> PathBuf {
@@ -605,6 +652,86 @@ mod tests {
 
     /// Talks to a real mpv if one is installed: two instances (as during a crossfade) play a
     /// generated WAV file at the same time, each reporting under its own id.
+    /// A music video the way YouTube serves it (picture and sound apart, joined with EDL) in
+    /// mpv's window; closing the window hides the picture and the sound plays on. Needs a
+    /// display, mpv and ffmpeg: `cargo test -- --ignored music_video_window`.
+    #[tokio::test]
+    #[ignore]
+    async fn music_video_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        let video = tmp.path().join("v.mp4");
+        let audio = tmp.path().join("a.m4a");
+        let ff = |args: &[&str]| {
+            let ok = std::process::Command::new("ffmpeg")
+                .args(["-loglevel", "error", "-y"])
+                .args(args)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "ffmpeg {args:?}");
+        };
+        ff(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=640x360:rate=25:duration=12",
+            video.to_str().unwrap(),
+        ]);
+        ff(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=12",
+            audio.to_str().unwrap(),
+        ]);
+        let part = |p: &std::path::Path| {
+            let p = p.to_string_lossy();
+            format!("!no_clip;!no_chapters;%{}%{p}", p.len())
+        };
+        let url = format!("edl://{};!new_stream;{}", part(&video), part(&audio));
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let opts = MpvOptions {
+            binary: "mpv".into(),
+            volume: 0.0,
+            replaygain: false,
+            gapless: true,
+            audio_device: String::new(),
+            exclusive: false,
+        };
+        let mpv = Mpv::spawn(&opts, 9, tx).await.unwrap();
+        mpv.command(json!(["set_property", "ao", "null"])).await.unwrap();
+        let title = "Artist – Song, with a comma";
+        mpv.load_with(
+            &url,
+            0.0,
+            &[
+                ("vid", "auto".into()),
+                ("force-window", "immediate".into()),
+                ("force-media-title", title.into()),
+            ],
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let prop = |name: &'static str| {
+            let mpv = &mpv;
+            async move { mpv.command(json!(["get_property", name])).await.unwrap_or(Value::Null) }
+        };
+        assert_eq!(prop("media-title").await, json!(title));
+        assert_eq!(prop("video-params/w").await, json!(640), "the picture is shown");
+        assert!(prop("aid").await.is_number(), "with its sound");
+        // The window's close button.
+        mpv.command(json!(["keypress", "CLOSE_WIN"])).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(prop("vid").await, json!(false), "the picture is hidden");
+        let before = prop("time-pos").await.as_f64().unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let after = prop("time-pos").await.as_f64().unwrap();
+        assert!(after > before + 0.5, "the sound plays on ({before} → {after})");
+        mpv.quit().await;
+    }
+
     #[tokio::test]
     async fn real_mpv_roundtrip() {
         if std::process::Command::new("mpv").arg("--version").output().is_err() {
@@ -631,7 +758,7 @@ mod tests {
         for mpv in [&a, &b] {
             // Use the null audio output so the test needs no sound card.
             mpv.command(json!(["set_property", "ao", "null"])).await.unwrap();
-            mpv.load(&wav.to_string_lossy(), 0.0).await.unwrap();
+            mpv.load_with(&wav.to_string_lossy(), 0.0, &[]).await.unwrap();
         }
         let mut loaded = HashSet::new();
         let mut ended = HashSet::new();
@@ -717,7 +844,7 @@ mod tests {
             ] {
                 mpv.command(json!(["set_property", name, value])).await.unwrap();
             }
-            mpv.load(&wav.to_string_lossy(), 0.0).await.unwrap();
+            mpv.load_with(&wav.to_string_lossy(), 0.0, &[]).await.unwrap();
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
             while let Ok(Some((_, ev))) = tokio::time::timeout_at(deadline, rx.recv()).await {
                 if matches!(ev, MpvEvent::EndFile { .. }) {

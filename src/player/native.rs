@@ -176,6 +176,11 @@ impl Mpv {
         Ok(())
     }
 
+    /// iOS plays no YouTube videos (they need yt-dlp): the extra options are for those only.
+    pub async fn load_with(&self, url: &str, start: f64, _extra: &[(&str, String)]) -> Result<()> {
+        self.load(url, start).await
+    }
+
     /// Adds `url` to play right after the current song.
     pub async fn append(&self, url: &str) -> Result<()> {
         let entry = self.next_entry.fetch_add(1, Ordering::Relaxed);

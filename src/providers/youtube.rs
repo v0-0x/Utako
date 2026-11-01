@@ -705,3 +705,234 @@ exit 1"#,
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+// -------------------------------------------------------------------------------------------
+// Music videos: YouTube videos as songs you play, keep and put in playlists
+// -------------------------------------------------------------------------------------------
+
+/// What music videos add to a song's name, cut from the title Utako shows.
+const VIDEO_DECORATIONS: &[&str] = &[
+    "official music video",
+    "official video",
+    "official audio",
+    "official lyric video",
+    "official visualizer",
+    "music video",
+    "lyric video",
+    "lyrics video",
+    "lyrics",
+    "visualizer",
+    "audio",
+    "video",
+    "hd",
+    "4k",
+    "mv",
+];
+
+/// A search result as a song: "Artist - Title (Official Video)" becomes its artist and title;
+/// otherwise the channel is the artist.
+pub fn video_track(v: &Video) -> crate::model::Track {
+    let (artist, title) = split_video_title(&v.title, &v.channel);
+    crate::model::Track {
+        id: crate::model::Track::youtube_id(&v.id),
+        source: crate::model::Source::YouTube,
+        title,
+        artist,
+        album: String::new(),
+        duration_ms: v.duration.map(|d| (d * 1000.0) as u64).unwrap_or(0),
+        track_no: None,
+        art: Some(format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", v.id)),
+        uri: watch_url(&v.id),
+        added_at: 0,
+        album_artist: String::new(),
+        disc_no: None,
+    }
+}
+
+pub fn watch_url(id: &str) -> String {
+    format!("https://www.youtube.com/watch?v={id}")
+}
+
+/// The video id of a YouTube track (`youtube:<id>`).
+pub fn video_id(track_id: &str) -> Option<&str> {
+    track_id.strip_prefix("youtube:").filter(|id| is_video_id(id))
+}
+
+/// YouTube's video ids: 11 letters, digits, '-' and '_'.
+pub fn is_video_id(id: &str) -> bool {
+    id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn split_video_title(title: &str, channel: &str) -> (String, String) {
+    let clean = strip_decorations(title);
+    let channel = channel
+        .trim()
+        .trim_end_matches(" - Topic")
+        .trim_end_matches("VEVO")
+        .trim()
+        .to_string();
+    for sep in [" - ", " – ", " — ", " | "] {
+        if let Some((artist, song)) = clean.split_once(sep) {
+            let (artist, song) = (artist.trim(), song.trim());
+            if !artist.is_empty() && !song.is_empty() {
+                return (artist.to_string(), song.to_string());
+            }
+        }
+    }
+    (channel, clean)
+}
+
+/// Removes "(Official Video)", "[Lyrics]" and the like (in brackets only, so a song really
+/// called "Video" keeps its name).
+fn strip_decorations(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    let mut rest = title;
+    while let Some(open) = rest.find(['(', '[']) {
+        let close_char = if rest.as_bytes()[open] == b'(' { ')' } else { ']' };
+        let Some(close) = rest[open..].find(close_char).map(|c| open + c) else {
+            break;
+        };
+        let inner = rest[open + 1..close].to_lowercase();
+        let inner = inner.trim();
+        let drop = VIDEO_DECORATIONS
+            .iter()
+            .any(|d| inner == *d || inner.starts_with(&format!("{d} ")))
+            || (inner.starts_with("official") && (inner.contains("video") || inner.contains("audio")));
+        out.push_str(&rest[..if drop { open } else { close + 1 }]);
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A video's streams, ready for mpv.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stream {
+    /// What mpv opens: the audio's link, or with the picture an `edl://` joining the video
+    /// and audio streams (YouTube serves them apart above 360p).
+    pub url: String,
+    /// The User-Agent the links were made for.
+    pub user_agent: Option<String>,
+}
+
+/// Looks up video `id`'s streams: only the sound, or with `video` the picture too (up to
+/// 1080p, not AV1, which older computers can't decode smoothly).
+pub async fn stream(ytdlp: &YtDlp, id: &str, video: bool) -> Result<Stream> {
+    if !is_video_id(id) {
+        bail!("not a YouTube video");
+    }
+    let format = if video {
+        "bestvideo[height<=?1080][vcodec!^=av01]+bestaudio/best[height<=?1080]/best"
+    } else {
+        "bestaudio/best"
+    };
+    let mut cmd = ytdlp.command();
+    cmd.args(["--no-playlist", "--dump-single-json", "--format", format])
+        .arg(watch_url(id))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = tokio::time::timeout(Duration::from_secs(45), cmd.output())
+        .await
+        .map_err(|_| anyhow!("YouTube didn't answer in time"))?
+        .map_err(spawn_error)?;
+    if !out.status.success() {
+        bail!("{}", explain(&last_error(&String::from_utf8_lossy(&out.stderr))));
+    }
+    parse_stream(&out.stdout)
+}
+
+pub fn parse_stream(json: &[u8]) -> Result<Stream> {
+    let v: Value = serde_json::from_slice(json).context("unexpected output from yt-dlp")?;
+    let url_of = |f: &Value| f.get("url").and_then(Value::as_str).map(str::to_owned);
+    let agent_of = |f: &Value| {
+        f.get("http_headers")
+            .and_then(|h| h.get("User-Agent"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let picked = v
+        .get("requested_formats")
+        .and_then(Value::as_array)
+        .filter(|f| f.len() == 2);
+    if let Some(formats) = picked {
+        let (Some(video), Some(audio)) = (url_of(&formats[0]), url_of(&formats[1])) else {
+            bail!("YouTube gave no stream");
+        };
+        return Ok(Stream {
+            url: edl_join(&video, &audio),
+            user_agent: agent_of(&formats[0]),
+        });
+    }
+    let url = url_of(&v).ok_or_else(|| anyhow!("YouTube gave no stream"))?;
+    Ok(Stream {
+        url,
+        user_agent: agent_of(&v),
+    })
+}
+
+/// mpv's EDL for one video stream and one audio stream played together (as mpv's own
+/// youtube-dl support does): `%<bytes>%` quotes each link.
+fn edl_join(video: &str, audio: &str) -> String {
+    let part = |url: &str| format!("!no_clip;!no_chapters;%{}%{url}", url.len());
+    format!("edl://{};!new_stream;{}", part(video), part(audio))
+}
+#[cfg(test)]
+mod video_tests {
+    use super::*;
+
+    fn video(title: &str, channel: &str) -> Video {
+        Video {
+            id: "dQw4w9WgXcQ".into(),
+            title: title.into(),
+            channel: channel.into(),
+            duration: Some(213.0),
+            description: String::new(),
+        }
+    }
+
+    #[test]
+    fn music_video_titles() {
+        let t = video_track(&video(
+            "Rick Astley - Never Gonna Give You Up (Official Music Video)",
+            "Rick Astley",
+        ));
+        assert_eq!(
+            (t.artist.as_str(), t.title.as_str()),
+            ("Rick Astley", "Never Gonna Give You Up")
+        );
+        assert_eq!(t.id, "youtube:dQw4w9WgXcQ");
+        assert_eq!(t.duration_ms, 213_000);
+        assert_eq!(t.uri, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        assert!(t.art.unwrap().contains("dQw4w9WgXcQ"));
+        // No "artist - title": the channel is the artist; brackets that aren't decorations stay.
+        let t = video_track(&video("Blinding Lights [Lyrics] (Remix)", "The Weeknd - Topic"));
+        assert_eq!(
+            (t.artist.as_str(), t.title.as_str()),
+            ("The Weeknd", "Blinding Lights (Remix)")
+        );
+        let t = video_track(&video("Dua Lipa – Houdini (Official Video)", "DuaLipaVEVO"));
+        assert_eq!((t.artist.as_str(), t.title.as_str()), ("Dua Lipa", "Houdini"));
+    }
+
+    #[test]
+    fn video_ids() {
+        assert_eq!(video_id("youtube:dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
+        assert_eq!(video_id("youtube:../etc/pass"), None);
+        assert_eq!(video_id("spotify:track:x"), None);
+    }
+
+    #[test]
+    fn streams() {
+        let audio = br#"{"url": "https://a.example/x?b=1,2", "http_headers": {"User-Agent": "UA"}}"#;
+        let s = parse_stream(audio).unwrap();
+        assert_eq!(s.url, "https://a.example/x?b=1,2");
+        assert_eq!(s.user_agent.as_deref(), Some("UA"));
+        let both = br#"{"requested_formats": [{"url": "https://v.example/v"}, {"url": "https://a.example/a;b"}]}"#;
+        let s = parse_stream(both).unwrap();
+        assert_eq!(
+            s.url,
+            "edl://!no_clip;!no_chapters;%19%https://v.example/v;!new_stream;!no_clip;!no_chapters;%21%https://a.example/a;b"
+        );
+        assert!(parse_stream(b"{}").is_err());
+    }
+}

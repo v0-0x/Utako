@@ -5,19 +5,24 @@ use super::*;
 impl Service {
     // ---------------------------------------------------------------- search, last.fm
 
-    /// Searches Spotify and SoundCloud at the same time; each shows up as soon as it answers.
+    /// Searches Spotify, SoundCloud and YouTube at the same time; each shows up as soon as it
+    /// answers.
     pub(super) fn search(&mut self, query: String) {
         let q = query.trim().to_string();
         let spotify = (!q.is_empty())
             .then(|| self.web_auth().map(|auth| (auth, self.spotify_api.clone())))
             .flatten();
         let sc = (!q.is_empty() && self.cfg.soundcloud.enabled).then(|| self.soundcloud.clone());
+        // Music videos, through yt-dlp (not on iOS, which can't run it).
+        let yt = (!q.is_empty() && !cfg!(target_os = "ios"))
+            .then(|| YtDlp::new(&self.cfg.downloads.ytdlp_path, &self.cfg.downloads.ytdlp_args));
         self.search_seq += 1;
         let seq = self.search_seq;
         self.shared.feed.write().unwrap().search = SearchState {
             query: q.clone(),
             spotify_pending: spotify.is_some(),
             soundcloud_pending: sc.is_some(),
+            youtube_pending: yt.is_some(),
             ..Default::default()
         };
         self.shared.repaint();
@@ -42,6 +47,31 @@ impl Service {
                     artists: hits.artists,
                     albums: hits.albums,
                     playlists: hits.playlists,
+                });
+            });
+        }
+        if let Some(ytdlp) = yt {
+            let tx = self.internal_tx.clone();
+            let q = q.clone();
+            tokio::spawn(async move {
+                let tracks = youtube::search(&ytdlp, &q, 15)
+                    .await
+                    .map(|videos| videos.iter().map(youtube::video_track).collect())
+                    .map_err(|e| {
+                        if e.is::<youtube::NotInstalled>() {
+                            anyhow!("music videos need yt-dlp (on Arch: sudo pacman -S yt-dlp)")
+                        } else {
+                            e
+                        }
+                    });
+                let _ = tx.send(Internal::SearchResults {
+                    seq,
+                    query: q,
+                    source: Source::YouTube,
+                    tracks,
+                    artists: Vec::new(),
+                    albums: Vec::new(),
+                    playlists: Vec::new(),
                 });
             });
         }
