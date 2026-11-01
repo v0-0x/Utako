@@ -116,6 +116,8 @@ fn main() -> anyhow::Result<()> {
         multisampling: 0,
         depth_buffer: 0,
         stencil_buffer: 0,
+        #[cfg(target_os = "ios")]
+        wgpu_options: ios_graphics(),
         ..Default::default()
     };
     let handle = rt.handle().clone();
@@ -269,6 +271,25 @@ mod instance {
                 let _ = commands.send(Command::Raise);
             }
         });
+    }
+}
+
+/// iOS draws with Metal through wgpu. wgpu's default limits ask for more than some devices
+/// have (16 values between shader stages where the iOS simulator has 15, and the app then
+/// quits at once), so the device is asked for exactly what it offers; egui needs far less.
+#[cfg(target_os = "ios")]
+fn ios_graphics() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::egui_wgpu::{wgpu, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
+    WgpuConfiguration {
+        wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
+            device_descriptor: Arc::new(|adapter: &wgpu::Adapter| wgpu::DeviceDescriptor {
+                label: Some("sumo"),
+                required_limits: adapter.limits(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }
 
