@@ -1823,6 +1823,15 @@ pub fn card_frame() -> egui::Frame {
         .inner_margin(egui::Margin::same(16))
 }
 
+/// A progress bar whose track shows on a card (egui draws it in the cards' own colour).
+pub fn progress(ui: &mut egui::Ui, done: f32, width: f32) -> egui::Response {
+    ui.scope(|ui| {
+        ui.visuals_mut().extreme_bg_color = super::theme::pal().selected;
+        ui.add(egui::ProgressBar::new(done).desired_width(width).show_percentage())
+    })
+    .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1893,13 +1902,4 @@ mod tests {
         assert!(crate::links::target("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC").is_some());
         assert!(crate::links::target("https://soundcloud.com/a/b").is_some());
     }
-}
-
-/// A progress bar whose track shows on a card (egui draws it in the cards' own colour).
-pub fn progress(ui: &mut egui::Ui, done: f32, width: f32) -> egui::Response {
-    ui.scope(|ui| {
-        ui.visuals_mut().extreme_bg_color = super::theme::pal().selected;
-        ui.add(egui::ProgressBar::new(done).desired_width(width).show_percentage())
-    })
-    .inner
 }
