@@ -120,7 +120,7 @@ fn set_now_playing(song: Option<(String, String, String, f64)>, playing: bool, p
         };
         let info: Option<Retained<AnyObject>> = msg_send![dict_class, new];
         let Some(info) = info else { return };
-        let mut put = |key: &str, value: Option<Retained<AnyObject>>| {
+        let put = |key: &str, value: Option<Retained<AnyObject>>| {
             if let (Some(key), Some(value)) = (ns_string(key), value) {
                 let _: () = msg_send![&info, setObject: &*value, forKey: &*key];
             }

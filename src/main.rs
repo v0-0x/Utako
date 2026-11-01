@@ -287,7 +287,7 @@ fn ios_graphics() -> eframe::egui_wgpu::WgpuConfiguration {
                 required_limits: adapter.limits(),
                 ..Default::default()
             }),
-            ..Default::default()
+            ..WgpuSetupCreateNew::without_display_handle()
         }),
         ..Default::default()
     }
