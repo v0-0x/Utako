@@ -134,6 +134,16 @@ Everything is under **Settings** (bottom of the sidebar).
 
 *Settings → Back up or move your settings* saves everything on the Settings page to one file (`Utako settings <date>.json` in your Documents folder), optionally with your **keys and logins** (Last.fm, SoundCloud, Apple Music, Discord, your Spotify app keys and the Spotify login itself) and **your own playlists and Liked Songs**. On another computer (Linux, Windows or macOS) import it from the same section, or drop the file onto the window: Utako takes the settings over, adds the playlists and restarts. Library and download folders that don't exist on the new computer, the mpv / yt-dlp programs and the audio device are left as they are there. A file with keys holds your passwords and tokens, so keep it private.
 
+## Media server (getting ready)
+
+Utako is ready for a music side of [mediaserver](https://github.com/v0-0x/mediaserver), the server that already holds the anime and movies for the Aniko and KumoBox apps. mediaserver doesn't have one yet; once it does:
+
+- Turn on *Settings → Media server → Use a media server*. Utako finds the server on your network (or type its address, like `pi.local`), and you let this device in from the server's dashboard. Settings shows the name to look for ("Utako on <computer> (<id>)").
+- The server's music shows up as a playlist named after it ("On <server>"). Its songs stream from the server, and seeking works.
+- *Send my settings and logins* puts your settings, keys, logins and playlists on the server. *Get settings and logins from it* brings them to another device, such as an iPhone. They're encrypted so that only the server can read them, and the server encrypts them again for each device it has let in.
+
+Requests are signed the way the Aniko and KumoBox apps sign theirs. [docs/media-server.md](docs/media-server.md) lists what the server's music side needs to answer.
+
 ## Keyboard shortcuts
 
 | Key | Action |
@@ -182,7 +192,7 @@ To keep memory low: lower *Covers kept in memory* in Settings → Appearance, an
 | What | Linux | Windows | macOS |
 | --- | --- | --- | --- |
 | Settings (`config.toml`, also editable by hand) | `~/.config/multimusic/` | `%APPDATA%\multimusic\config\` | `~/Library/Application Support/multimusic/` |
-| Library database, Spotify login, scrobble queue, log | `~/.local/share/multimusic/` | `%APPDATA%\multimusic\data\` | `~/Library/Application Support/multimusic/` |
+| Library database, Spotify login, scrobble queue, media server key (`server-identity.json`), log | `~/.local/share/multimusic/` | `%APPDATA%\multimusic\data\` | `~/Library/Application Support/multimusic/` |
 | Cover art and lyrics cache | `~/.cache/multimusic/` | `%LOCALAPPDATA%\multimusic\cache\` | `~/Library/Caches/multimusic/` |
 
 Logs: on Linux run `MULTIMUSIC_LOG=multimusic=debug multimusic` in a terminal. The Windows and macOS apps write `multimusic.log` in the data folder (set `MULTIMUSIC_LOG=multimusic=debug` for more detail).

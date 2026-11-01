@@ -76,6 +76,7 @@ impl Downloader {
                 (path, self.details(track).await, "YouTube".to_string(), false)
             }
             Source::Local => bail!("this song is already a file on your computer"),
+            Source::Server => bail!("this song is already on your media server"),
         };
         if meta.album.trim().is_empty() {
             // Released on its own: a single.

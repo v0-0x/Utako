@@ -41,6 +41,13 @@ sha2 = "0.10"
 base64 = "0.22"
 futures-util = "0.3"
 raw-window-handle = "0.6"
+# The media server's peer protocol (src/hub): X25519 keys, signed requests, sealed logins.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+aes-gcm = "0.10"
+hmac = "0.12"
+data-encoding = "2"
+hex = "0.4"
+socket2 = { version = "0.6", features = ["all"] }
 
 # Desktops draw with OpenGL; iOS has no OpenGL to speak of, so the iPhone app draws with Metal
 # (through wgpu).

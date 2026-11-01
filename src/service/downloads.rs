@@ -349,6 +349,20 @@ impl Service {
             self.check_updates(true);
         }
 
+        if old.server != self.cfg.server {
+            self.server = None;
+            self.server_checked = None;
+            self.server_library_version.clear();
+            if !self.cfg.server.enabled {
+                let mut feed = self.shared.feed.write().unwrap();
+                feed.server.status.clear();
+                feed.server.allowed = false;
+            }
+            // Its playlist goes when its music is turned off (and comes back when turned on).
+            if !(self.cfg.server.enabled && self.cfg.server.library) {
+                self.drop_server_playlists();
+            }
+        }
         let playing_video = self.playing.as_ref().is_some_and(|t| t.source == Source::YouTube);
         if old.playback.youtube_video != self.cfg.playback.youtube_video && playing_video {
             let at = self.current_position();

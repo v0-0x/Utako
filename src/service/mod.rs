@@ -34,8 +34,11 @@ use crate::providers::youtube::{self, YtDlp};
 mod downloads;
 mod pages;
 mod playback;
+mod server;
 mod sync;
 mod updates;
+
+pub use server::ServerFeed;
 
 use self::{pages::*, sync::*};
 
@@ -146,6 +149,12 @@ pub enum Command {
     },
     ImportAppleXml(PathBuf),
     ImportAppleApi,
+    /// Connects to the media server again (after its address changed, say).
+    ServerConnect,
+    /// Gives the media server this device's settings and logins.
+    ServerSendSettings,
+    /// Takes the settings and logins the media server keeps.
+    ServerFetchSettings,
     /// Saves the settings (and optionally keys, logins and your playlists) to a file.
     ExportSettings {
         path: PathBuf,
@@ -397,6 +406,8 @@ pub struct LyricsState {
 #[derive(Debug, Clone, Default)]
 pub struct Feed {
     pub toasts: Vec<Toast>,
+    /// The media server: found, connected, let in.
+    pub server: ServerFeed,
     pub search: SearchState,
     pub page: PageState,
     pub lyrics: LyricsState,
@@ -579,6 +590,9 @@ enum Internal {
     },
     /// The client_id SoundCloud accepted, saved so the next start needn't scrape one.
     SoundCloudClientId(String),
+    ServerFound(crate::hub::discovery::Found),
+    ServerState(Box<server::ServerState>),
+    ServerSettings(Result<Vec<u8>>),
     PageLoaded {
         key: String,
         result: Result<PageState>,
@@ -783,6 +797,13 @@ pub struct Service {
     spotify_pending_play: Option<(u64, Track, f64)>,
     /// Bumped by every search.
     search_seq: u64,
+    /// This device's identity and requests to the media server.
+    hub: Arc<crate::hub::client::Client>,
+    /// The media server in use, when connected and let in.
+    server: Option<crate::hub::client::Server>,
+    server_listening: bool,
+    server_checked: Option<Instant>,
+    server_library_version: String,
     /// The load waited on (its number) and since when, to notice one that never starts.
     loading_since: Option<(u64, Instant)>,
     /// The load that was a retry after a stream broke off (only one retry per song).
@@ -847,6 +868,12 @@ type Started = (Service, MpvReceiver, SpotifyReceiver, UnboundedReceiver<Interna
 impl Service {
     fn new(shared: Arc<Shared>, paths: Paths, cfg: Config, cmd_tx: UnboundedSender<Command>) -> Result<Started> {
         let db = Db::open(&paths.database())?;
+        // This device's key pair for the media server (its ID is what the server's dashboard
+        // lets in).
+        let identity = crate::hub::identity::Identity::load_or_create(&paths.data_dir.join("server-identity.json"))?;
+        let device = server::device_name();
+        shared.feed.write().unwrap().server.device = format!("{device} ({})", identity.id);
+        let hub = Arc::new(crate::hub::client::Client::new(Arc::new(identity), device));
         let lib = Library::load(&db)?;
         *shared.library.write().unwrap() = lib;
 
@@ -930,6 +957,11 @@ impl Service {
             spotify_pending_page: None,
             spotify_pending_play: None,
             search_seq: 0,
+            hub,
+            server: None,
+            server_listening: false,
+            server_checked: None,
+            server_library_version: String::new(),
             loading_since: None,
             retried_load: 0,
             page_cache: Vec::new(),
@@ -1346,6 +1378,9 @@ impl Service {
             Command::ImportAppleApi => self.import_apple_api(),
             Command::ExportSettings { path, include } => self.export_settings(&path, include),
             Command::ImportSettings(path) => self.import_settings(&path),
+            Command::ServerConnect => self.server_connect(),
+            Command::ServerSendSettings => self.send_settings_to_server(),
+            Command::ServerFetchSettings => self.fetch_settings_from_server(),
             Command::CheckUpdates { manual } => self.check_updates(manual),
             Command::InstallUpdate => self.install_update(),
             Command::AuthorizeUpdate(password) => self.authorize_update(password),
@@ -1997,6 +2032,9 @@ impl Service {
                 drop(feed);
                 self.shared.repaint();
             }
+            Internal::ServerFound(found) => self.server_found(found),
+            Internal::ServerState(state) => self.server_state(*state),
+            Internal::ServerSettings(result) => self.server_settings(result),
             Internal::SoundCloudClientId(id) => {
                 if self.db.get_kv("soundcloud_client_id").as_deref() != Some(id.as_str()) {
                     let _ = self.db.set_kv("soundcloud_client_id", &id);

@@ -13,6 +13,8 @@ pub enum Source {
     AppleMusic,
     /// A YouTube video (music videos): plays through yt-dlp and mpv, with or without its picture.
     YouTube,
+    /// A song on the media server (v0-0x/mediaserver), streamed from it.
+    Server,
 }
 
 impl Source {
@@ -23,6 +25,7 @@ impl Source {
             Source::SoundCloud => "soundcloud",
             Source::AppleMusic => "applemusic",
             Source::YouTube => "youtube",
+            Source::Server => "server",
         }
     }
 
@@ -33,6 +36,7 @@ impl Source {
             "soundcloud" => Source::SoundCloud,
             "applemusic" => Source::AppleMusic,
             "youtube" => Source::YouTube,
+            "server" => Source::Server,
             _ => return None,
         })
     }
@@ -44,6 +48,7 @@ impl Source {
             Source::SoundCloud => "SoundCloud",
             Source::AppleMusic => "Apple Music",
             Source::YouTube => "YouTube",
+            Source::Server => "Media server",
         }
     }
 }
@@ -103,6 +108,11 @@ impl Track {
 
     pub fn youtube_id(video: &str) -> String {
         format!("youtube:{video}")
+    }
+
+    /// A song on the media server with that ID; its `uri` is its path there.
+    pub fn server_id(server: &str, path: &str) -> String {
+        format!("server:{server}:{path}")
     }
 
     /// Duration in seconds as f64.

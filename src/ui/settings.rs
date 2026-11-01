@@ -40,6 +40,21 @@ fn section(ui: &mut Ui, glyph: &str, color: Color32, title: &str, add: impl FnOn
     ui.add_space(14.0);
 }
 
+/// What buttons with these labels take in a row, the spacing before each included: the width a
+/// text field ahead of them leaves free, so the row never runs past the page.
+fn buttons_width(ui: &Ui, labels: impl IntoIterator<Item = egui::WidgetText>) -> f32 {
+    let spacing = ui.spacing();
+    labels
+        .into_iter()
+        .map(|label| {
+            let text = label.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
+            text.size().x + 2.0 * spacing.button_padding.x + spacing.item_spacing.x
+        })
+        .sum::<f32>()
+        // The field's own margin, outside its desired width.
+        + 10.0
+}
+
 fn hint(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(pal().text_faint));
 }
@@ -110,7 +125,10 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut st.new_folder)
                             .hint_text("~/Music  (or drop a folder onto the window)")
-                            .desired_width(ui.available_width() - 160.0),
+                            .desired_width(
+                                ui.available_width()
+                                    - buttons_width(ui, ["Add".into(), theme::ic(icon::FOLDER_OPEN, "Browse…")]),
+                            ),
                     );
                     let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if (ui.button("Add").clicked() || enter) && !st.new_folder.trim().is_empty() {
@@ -231,7 +249,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                                 egui::TextEdit::singleline(&mut cfg.spotify.web_api_redirect_uri)
                                     .hint_text(&default_uri)
                                     .font(egui::TextStyle::Monospace)
-                                    .desired_width(ui.available_width() - 80.0),
+                                    .desired_width(ui.available_width() - buttons_width(ui, [theme::ic(icon::COPY, "Copy")])),
                             );
                             if ui.small_button(theme::ic(icon::COPY, "Copy")).clicked() {
                                 ui.ctx().copy_text(cfg.spotify.web_api_redirect());
@@ -313,7 +331,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     ui.add(
                         egui::TextEdit::singleline(&mut cfg.downloads.folder)
                             .hint_text(format!("{root}/<service>"))
-                            .desired_width(ui.available_width() - 100.0),
+                            .desired_width(ui.available_width() - buttons_width(ui, [theme::ic(icon::FOLDER_OPEN, "Browse…")])),
                     );
                     if ui.button(theme::ic(icon::FOLDER_OPEN, "Browse…")).clicked() {
                         picker::open(ui.ctx(), "download-folder", "Download folder", Pick::Folder);
@@ -403,7 +421,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     ui.add(
                         egui::TextEdit::singleline(&mut st.import_path)
                             .hint_text("~/Downloads/Library.xml")
-                            .desired_width(ui.available_width() - 90.0),
+                            .desired_width(ui.available_width() - buttons_width(ui, ["Import".into()])),
                     );
                     if ui.button("Import").clicked() && !st.import_path.trim().is_empty() {
                         let p = expand_home(&st.import_path);
@@ -688,6 +706,68 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 }
             });
 
+            // ---------------------------------------------------------- media server
+            section(ui, icon::HARD_DRIVES, source_color(Source::Server), "Media server", |ui| {
+                ui.checkbox(&mut cfg.server.enabled, "Use a media server");
+                hint(
+                    ui,
+                    "mediaserver (github.com/v0-0x/mediaserver) on a Raspberry Pi or another computer that stays \
+                     on: its music plays here, and your settings and logins go through it to your other devices. \
+                     It needs a version of mediaserver with a music side.",
+                );
+                if cfg.server.enabled {
+                    text_field(
+                        ui,
+                        "Address",
+                        &mut cfg.server.address,
+                        "Empty: the one found on your network (or e.g. pi.local)",
+                        false,
+                    );
+                    let server = cx.feed.server.clone();
+                    for (name, address) in &server.found {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("Found {name} at {address}")).color(pal().text_dim));
+                            if cfg.server.address != *address && ui.small_button("Use this one").clicked() {
+                                cfg.server.address = address.clone();
+                            }
+                        });
+                    }
+                    if !server.status.is_empty() {
+                        let color = if server.allowed { Color32::from_rgb(0x4a, 0xd6, 0x8a) } else { pal().text_dim };
+                        ui.label(RichText::new(&server.status).color(color));
+                    }
+                    ui.label(
+                        RichText::new(format!("This device: {}", server.device))
+                            .small()
+                            .color(pal().text_faint),
+                    );
+                    ui.checkbox(&mut cfg.server.library, "Play its music (a playlist named after it)");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .add_enabled(server.allowed, egui::Button::new("Send my settings and logins"))
+                            .clicked()
+                        {
+                            cx.actions.push(Action::Cmd(Command::ServerSendSettings));
+                        }
+                        if ui
+                            .add_enabled(server.allowed, egui::Button::new("Get settings and logins from it"))
+                            .clicked()
+                        {
+                            cx.actions.push(Action::Cmd(Command::ServerFetchSettings));
+                        }
+                        if ui.button("Connect again").clicked() {
+                            cx.actions.push(Action::Cmd(Command::ServerConnect));
+                        }
+                    });
+                    hint(
+                        ui,
+                        "Send them from the device that has them, then Get them on another one (an iPhone, say). \
+                         They're sealed so only the server can read them, and it seals them again for each device \
+                         its dashboard lets in.",
+                    );
+                }
+            });
+
             // ---------------------------------------------------------- backup
             section(ui, icon::ARCHIVE, TEXT, "Back up or move your settings", |ui| {
                 hint(
@@ -707,7 +787,8 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     st.export_to = crate::backup::default_export_path().to_string_lossy().into_owned();
                 }
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut st.export_to).desired_width(ui.available_width() - 90.0));
+                    let buttons = buttons_width(ui, [theme::ic(icon::UPLOAD_SIMPLE, "Export")]);
+                    ui.add(egui::TextEdit::singleline(&mut st.export_to).desired_width(ui.available_width() - buttons));
                     if ui.button(theme::ic(icon::UPLOAD_SIMPLE, "Export")).clicked() && !st.export_to.trim().is_empty() {
                         cx.actions.push(Action::Cmd(Command::ExportSettings {
                             path: expand_home(&st.export_to),
@@ -752,7 +833,16 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     ui.add(
                         egui::TextEdit::singleline(&mut st.settings_file)
                             .hint_text("Settings file to import (or drop it onto the window)")
-                            .desired_width(ui.available_width() - 190.0),
+                            .desired_width(
+                                ui.available_width()
+                                    - buttons_width(
+                                        ui,
+                                        [
+                                            theme::ic(icon::FOLDER_OPEN, "Browse…"),
+                                            theme::ic(icon::DOWNLOAD_SIMPLE, "Import…"),
+                                        ],
+                                    ),
+                            ),
                     );
                     if ui.button(theme::ic(icon::FOLDER_OPEN, "Browse…")).clicked() {
                         picker::open(

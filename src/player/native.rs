@@ -156,8 +156,7 @@ impl Mpv {
         }
     }
 
-    /// Plays `url` (a file or a stream) from `start` seconds, replacing what plays.
-    pub async fn load(&self, url: &str, start: f64) -> Result<()> {
+    async fn load_from(&self, url: &str, start: f64, headers: Vec<(String, String)>) -> Result<()> {
         let entry = self.next_entry.fetch_add(1, Ordering::Relaxed);
         self.playing.store(entry, Ordering::Relaxed);
         let _ = self.events.send((
@@ -169,23 +168,40 @@ impl Mpv {
         if let Some(task) = self.appending.lock().unwrap().take() {
             task.abort();
         }
-        let task = self.fetch(url, entry, move |entry, path| Cmd::Open { entry, path, start });
+        let task = self.fetch(url, entry, headers, move |entry, path| Cmd::Open { entry, path, start });
         if let Some(old) = self.loading.lock().unwrap().replace(task) {
             old.abort();
         }
         Ok(())
     }
 
-    /// iOS plays no YouTube videos (they need yt-dlp): the extra options are for those only.
-    pub async fn load_with(&self, url: &str, start: f64, _extra: &[(&str, String)]) -> Result<()> {
-        self.load(url, start).await
+    /// Of mpv's per-file options only the request headers count here (a media server's song
+    /// is streamed with its signed headers); the rest are for YouTube videos, which iOS can't play.
+    pub async fn load_with(&self, url: &str, start: f64, extra: &[(&str, String)]) -> Result<()> {
+        let headers = extra
+            .iter()
+            .filter(|(name, _)| *name == "http-header-fields")
+            .flat_map(|(_, fields)| fields.split(','))
+            .filter_map(|field| field.split_once(": "))
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        self.load_from(url, start, headers).await
+    }
+
+    /// Plays `url` (a file or a stream) from `start` seconds, replacing what plays.
+    pub async fn load(&self, url: &str, start: f64) -> Result<()> {
+        self.load_from(url, start, Vec::new()).await
     }
 
     /// Adds `url` to play right after the current song.
     pub async fn append(&self, url: &str) -> Result<()> {
         let entry = self.next_entry.fetch_add(1, Ordering::Relaxed);
         let after = self.playing.load(Ordering::Relaxed);
-        let task = self.fetch(url, entry, move |entry, path| Cmd::Append { entry, after, path });
+        let task = self.fetch(url, entry, Vec::new(), move |entry, path| Cmd::Append {
+            entry,
+            after,
+            path,
+        });
         if let Some(old) = self.appending.lock().unwrap().replace(task) {
             old.abort();
         }
@@ -198,6 +214,7 @@ impl Mpv {
         &self,
         url: &str,
         entry: i64,
+        headers: Vec<(String, String)>,
         cmd: impl FnOnce(i64, PathBuf) -> Cmd + Send + 'static,
     ) -> tokio::task::JoinHandle<()> {
         let url = url.to_owned();
@@ -205,7 +222,9 @@ impl Mpv {
         tokio::spawn(async move {
             let path = if url.starts_with("http://") || url.starts_with("https://") {
                 let path = stream_file(id, entry);
-                if let Err(e) = crate::providers::soundcloud::save_stream(&crate::http::client(), &url, &path).await {
+                if let Err(e) =
+                    crate::providers::soundcloud::save_stream(&crate::http::client(), &url, &path, &headers).await
+                {
                     let _ = std::fs::remove_file(&path);
                     let _ = events.send((
                         id,

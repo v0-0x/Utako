@@ -1221,10 +1221,18 @@ fn parse_hls(text: &str, base: &str) -> Result<Hls> {
 /// Saves a stream to `path` for the iPhone app's player, which plays files: a progressive
 /// file as it is, an HLS playlist as its segments joined together.
 #[cfg(target_os = "ios")]
-pub(crate) async fn save_stream(http: &reqwest::Client, url: &str, path: &Path) -> Result<()> {
+pub(crate) async fn save_stream(
+    http: &reqwest::Client,
+    url: &str,
+    path: &Path,
+    headers: &[(String, String)],
+) -> Result<()> {
     use tokio::io::AsyncWriteExt;
-    let resp = http
-        .get(url)
+    let mut req = http.get(url);
+    for (name, value) in headers {
+        req = req.header(name.as_str(), value.as_str());
+    }
+    let resp = req
         .timeout(Duration::from_secs(600))
         .send()
         .await
@@ -1237,7 +1245,13 @@ pub(crate) async fn save_stream(http: &reqwest::Client, url: &str, path: &Path) 
             .and_then(|v| v.to_str().ok())
             .is_some_and(|t| t.contains("mpegurl"));
     if !is_playlist {
-        return save_body(http, url, path, &|_| {}).await;
+        let mut file = tokio::fs::File::create(path).await?;
+        let mut resp = resp;
+        while let Some(chunk) = resp.chunk().await? {
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
+        return Ok(());
     }
     let playlist = resp.text().await?;
     let hls = parse_hls(&playlist, url)?;

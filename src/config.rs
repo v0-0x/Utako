@@ -24,6 +24,29 @@ pub struct Config {
     pub downloads: DownloadsConfig,
     pub ui: UiConfig,
     pub updates: UpdatesConfig,
+    pub server: ServerConfig,
+}
+
+/// A media server (v0-0x/mediaserver) on the home network: its music side, when it has one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ServerConfig {
+    pub enabled: bool,
+    /// Its address (`pi.local`, `192.168.1.5:43411`); empty: the one found on the network.
+    pub address: String,
+    /// Play its music library (a playlist named after it).
+    pub library: bool,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        // Off until turned on; once on, its music comes with it.
+        ServerConfig {
+            enabled: false,
+            address: String::new(),
+            library: true,
+        }
+    }
 }
 
 /// The music folder Utako starts with: the system's, or on iOS Utako's own Documents folder,
@@ -55,6 +78,7 @@ impl Default for Config {
             downloads: DownloadsConfig::default(),
             ui: UiConfig::default(),
             updates: UpdatesConfig::default(),
+            server: ServerConfig::default(),
         }
     }
 }

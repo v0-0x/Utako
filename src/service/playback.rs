@@ -91,6 +91,7 @@ impl Service {
             }
             Source::Spotify => self.start_spotify(track, start).await,
             Source::YouTube => self.start_youtube(track, seq).await,
+            Source::Server => self.start_server_track(track).await,
             Source::AppleMusic => {
                 if let Some(t) = self.cached_resolution(&track) {
                     Box::pin(self.dispatch_resolved(track, Some(t), start)).await;
@@ -449,7 +450,7 @@ impl Service {
                 });
             }
             // SoundCloud and YouTube streams are inspected through mpv once loaded.
-            Source::SoundCloud | Source::AppleMusic | Source::YouTube => {}
+            Source::SoundCloud | Source::AppleMusic | Source::YouTube | Source::Server => {}
         }
     }
 
@@ -952,6 +953,7 @@ impl Service {
         self.last_tick = Instant::now();
         let playing = self.status == PlayStatus::Playing;
         self.check_stalled_load().await;
+        self.server_tick();
 
         if playing && self.engine == Engine::Mpv {
             if let Some(mpv) = &self.mpv {
@@ -1383,6 +1385,7 @@ pub(super) fn load_lead(source: Source) -> f64 {
         Source::AppleMusic => 2.5,
         // yt-dlp takes a few seconds to find a video's streams.
         Source::YouTube => 4.0,
+        Source::Server => 0.6,
     }
 }
 

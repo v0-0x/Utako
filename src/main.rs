@@ -9,6 +9,7 @@ mod clock;
 mod config;
 mod downloader;
 mod http;
+mod hub;
 mod integrations;
 mod library;
 mod links;

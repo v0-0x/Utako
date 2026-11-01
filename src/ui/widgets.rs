@@ -1362,7 +1362,7 @@ pub fn song_link(t: &Track) -> String {
         Source::SoundCloud => t.uri.starts_with("http").then(|| t.uri.clone()),
         Source::Local => Some(t.uri.clone()),
         Source::YouTube => Some(t.uri.clone()),
-        Source::AppleMusic => None,
+        Source::AppleMusic | Source::Server => None,
     };
     link.unwrap_or_else(|| format!("{} - {}", t.artist, t.title))
 }
@@ -1757,6 +1757,13 @@ pub fn track_menu(ui: &mut Ui, cx: &mut Cx, t: &Track, in_playlist: Option<(Opti
                 cx.actions.push(Action::OpenUrl(t.uri.clone()));
                 ui.close();
             }
+        }
+        Source::Server => {
+            ui.label(
+                egui::RichText::new("On your media server")
+                    .small()
+                    .color(pal().text_faint),
+            );
         }
         Source::AppleMusic => {
             ui.label(

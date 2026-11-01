@@ -190,13 +190,13 @@ impl Service {
     }
 
     pub(super) fn import_settings(&mut self, path: &Path) {
-        let file = match crate::backup::read(path) {
-            Ok(file) => file,
-            Err(e) => {
-                self.shared.error(format!("Couldn't import settings: {e:#}"));
-                return;
-            }
-        };
+        match crate::backup::read(path) {
+            Ok(file) => self.import_settings_file(file),
+            Err(e) => self.shared.error(format!("Couldn't import settings: {e:#}")),
+        }
+    }
+
+    pub(super) fn import_settings_file(&mut self, file: crate::backup::SettingsFile) {
         let cfg = crate::backup::merge_config(&self.cfg, &file);
         if file.has_keys {
             let dir = self.paths.spotify_dir();
