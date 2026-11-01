@@ -134,15 +134,16 @@ Everything is under **Settings** (bottom of the sidebar).
 
 *Settings → Back up or move your settings* saves everything on the Settings page to one file (`Utako settings <date>.json` in your Documents folder), optionally with your **keys and logins** (Last.fm, SoundCloud, Apple Music, Discord, your Spotify app keys and the Spotify login itself) and **your own playlists and Liked Songs**. On another computer (Linux, Windows or macOS) import it from the same section, or drop the file onto the window: Utako takes the settings over, adds the playlists and restarts. Library and download folders that don't exist on the new computer, the mpv / yt-dlp programs and the audio device are left as they are there. A file with keys holds your passwords and tokens, so keep it private.
 
-## Media server (getting ready)
+## Media server
 
-Utako is ready for a music side of [mediaserver](https://github.com/v0-0x/mediaserver), the server that already holds the anime and movies for the Aniko and KumoBox apps. mediaserver doesn't have one yet; once it does:
+Utako works with [mediaserver](https://github.com/v0-0x/mediaserver) (1.0.8 or newer), the home server that also holds the anime and movies for the Aniko and KumoBox apps. Its music side is for Utako:
 
-- Turn on *Settings → Media server → Use a media server*. Utako finds the server on your network (or type its address, like `pi.local`), and you let this device in from the server's dashboard. Settings shows the name to look for ("Utako on <computer> (<id>)").
-- The server's music shows up as a playlist named after it ("On <server>"). Its songs stream from the server, and seeking works.
+- Turn on *Settings → Media server → Use a media server*. Utako finds the server on your network (or type its address, like `pi.local`), and you let this device in from the server's dashboard (*Music → Devices*). Settings shows the name to look for ("Utako on <computer> (<id>)").
+- The server's music shows up as a playlist named after it ("On <server>"), with its covers. Its songs stream from the server, and seeking works.
+- *Upload a folder…* and *Upload a song…* send music from this computer into the server's library, once the dashboard turns on *Let it upload here* for this device. A folder keeps its name and what's in it (songs, covers, lyrics); what's there already isn't sent again, and an upload cut short carries on where it stopped.
 - *Send my settings and logins* puts your settings, keys, logins and playlists on the server. *Get settings and logins from it* brings them to another device, such as an iPhone. They're encrypted so that only the server can read them, and the server encrypts them again for each device it has let in.
 
-Requests are signed the way the Aniko and KumoBox apps sign theirs. [docs/media-server.md](docs/media-server.md) lists what the server's music side needs to answer.
+Requests are signed the way the Aniko and KumoBox apps sign theirs. [docs/media-server.md](docs/media-server.md) describes what Utako and the music side say to each other.
 
 ## Keyboard shortcuts
 

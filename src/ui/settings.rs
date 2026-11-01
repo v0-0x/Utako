@@ -668,7 +668,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                             ui.spinner();
                         }
                         (UpdateStatus::Downloading(done), _) => {
-                            ui.add(egui::ProgressBar::new(*done).desired_width(160.0).show_percentage());
+                            widgets::progress(ui, *done, 160.0);
                         }
                         (UpdateStatus::NeedsPassword { .. }, _) => {
                             ui.label("Waiting for your password…");
@@ -713,7 +713,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     ui,
                     "mediaserver (github.com/v0-0x/mediaserver) on a Raspberry Pi or another computer that stays \
                      on: its music plays here, and your settings and logins go through it to your other devices. \
-                     It needs a version of mediaserver with a music side.",
+                     It needs mediaserver 1.0.8 or newer, which has a music side.",
                 );
                 if cfg.server.enabled {
                     text_field(
@@ -765,6 +765,10 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                          They're sealed so only the server can read them, and it seals them again for each device \
                          its dashboard lets in.",
                     );
+                    #[cfg(not(target_os = "ios"))]
+                    if server.allowed {
+                        server_upload(ui, cx, &server);
+                    }
                 }
             });
 
@@ -894,4 +898,67 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
             });
         });
     });
+}
+
+/// Uploading songs to the media server: a folder or a song, with how far it's got.
+#[cfg(not(target_os = "ios"))]
+fn server_upload(ui: &mut Ui, cx: &mut Cx, server: &crate::service::ServerFeed) {
+    ui.add_space(6.0);
+    if let Some(up) = &server.upload {
+        let what = if up.files == 0 {
+            format!("Getting ready to upload {}…", up.file)
+        } else {
+            format!("Uploading {} ({} of {})", up.file, up.file_no, up.files)
+        };
+        ui.label(RichText::new(what).color(pal().text_dim));
+        ui.horizontal(|ui| {
+            let done = if up.total > 0 {
+                up.sent as f32 / up.total as f32
+            } else {
+                0.0
+            };
+            widgets::progress(ui, done, (ui.available_width() - 80.0).max(120.0));
+            if ui.button("Stop").clicked() {
+                cx.actions.push(Action::Cmd(Command::ServerUploadStop));
+            }
+        });
+    } else if server.uploads {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(theme::ic(icon::UPLOAD_SIMPLE, "Upload a folder…")).clicked() {
+                picker::open(
+                    ui.ctx(),
+                    "server-upload-folder",
+                    "Upload a folder to the media server",
+                    Pick::Folder,
+                );
+            }
+            if ui.button(theme::ic(icon::UPLOAD_SIMPLE, "Upload a song…")).clicked() {
+                picker::open(
+                    ui.ctx(),
+                    "server-upload-song",
+                    "Upload a song to the media server",
+                    Pick::File("Songs", crate::service::SERVER_SONG_EXTENSIONS),
+                );
+            }
+        });
+        hint(
+            ui,
+            "Into the server's music, as they are on this computer: an artist's or an album's folder keeps its \
+             name and what's in it. What's there already isn't sent again, and an upload cut short carries on \
+             where it stopped.",
+        );
+    } else {
+        hint(
+            ui,
+            "To upload songs to it, turn on “Let it upload here” for this device in its dashboard \
+             (Music › Devices).",
+        );
+    }
+    for id in ["server-upload-folder", "server-upload-song"] {
+        match picker::take(ui.ctx(), id) {
+            Some(Ok(path)) => cx.actions.push(Action::Cmd(Command::ServerUpload(path))),
+            Some(Err(e)) => cx.actions.push(Action::Cmd(Command::Notify(e))),
+            None => {}
+        }
+    }
 }

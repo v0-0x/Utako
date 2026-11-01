@@ -1,23 +1,29 @@
 # Utako and the media server
 
-Utako can already talk to a music side of [mediaserver](https://github.com/v0-0x/mediaserver).
-That side doesn't exist yet. This note describes what it needs to answer, so it can be added
-later without changing Utako.
+Utako talks to the music side of [mediaserver](https://github.com/v0-0x/mediaserver), from
+mediaserver 1.0.8 on (its `music/` folder). This note is what the two say to each other.
 
 Everything here reuses the peer protocol that mediaserver's anime and movie sides already
 speak with the Aniko and KumoBox apps (`anime/internal/share`): the same keys, signatures,
-headers and sealing. Utako's copy is `src/hub/`. Its tests check it against vectors made by
-mediaserver's own Go code (`src/hub/testdata/mediaserver-vectors.json`).
+headers and sealing. Utako's copy is `src/hub/`, the music side's `music/internal/peer`. Both
+are tested against the same vectors, made by the anime side's Go code
+(`src/hub/testdata/mediaserver-vectors.json`, copied as mediaserver's
+`music/internal/peer/testdata/utako-vectors.json`).
 
-`stand_in_server` in `src/hub/client.rs` runs the whole exchange against a stand-in built from
-that Go code:
-- hello before and after the device is allowed;
-- the library;
+`real_server` in `src/hub/client.rs` runs the whole exchange against a real mediaserver:
+- hello before and after the device is let in (through the dashboard's API);
+- the library, and covers;
 - settings sent from one device and fetched by another;
-- a song streamed by mpv with a ticket, with a `Range` request;
-- a ticket for one file refused for another.
+- a song streamed by mpv with a ticket, a seek, and a `Range` request;
+- a ticket for one file refused for another;
+- uploads refused until the dashboard lets them, then a file of three pieces, stopped after
+  the first and carried on; sent again (already there); another file of the same name (not
+  sent over it); and the library has it a moment later.
 
-Run it with `UTAKO_STANDIN=<address> cargo test -- --ignored stand_in_server`.
+Run it with `UTAKO_SERVER=<address> UTAKO_DASHBOARD=http://<address>:43211
+UTAKO_SESSION=<the dashboard's kumo_session cookie> cargo test --release -- --ignored
+real_server`. The library needs a song of 20 seconds or more, and one with a cover. It leaves
+an "Utako upload test <number>" folder in the server's first music folder.
 
 ## Ports and finding the server
 
@@ -63,19 +69,28 @@ These are exactly as in `identity.go`:
 | Request | Signed | Answer |
 |---|---|---|
 | `GET /api/peer/whoami` | no | `{"id","name","key","version","role"}`. Utako checks the key against the ID. |
-| `GET /api/peer/hello` | yes | `{"id","name","version","shares","files"}`. See below. |
+| `GET /api/peer/hello` | yes | `{"id","name","version","shares","files","uploads"}`. See below. |
 | `GET /api/peer/music/library` | yes | `{"version","tracks":[…]}`. See below. |
 | `GET /api/peer/local/file?path=<QueryEscape(path)>` | ticket | The audio file's bytes. |
+| `GET /api/peer/music/art?path=<QueryEscape(path)>` | yes | The song's cover (an image), or 404. |
 | `POST /api/peer/music/settings` | yes | 2xx with an empty body. Body: `{"sealed","updatedAt"}`. |
 | `GET /api/peer/music/settings` | yes | `{"sealed","updatedAt"}`, or 404 when nothing is kept yet. |
+| `GET /api/peer/upload` | yes | `{"folders":[…],"chunk":8388608}`: where uploads go. See below. |
+| `GET /api/peer/upload?folder=&path=&total=` | yes | `{"path","have","done"}`: where that file stands. |
+| `POST /api/peer/upload?folder=&path=&offset=&total=` | yes | A piece of the file in the body; the same answer. |
+
+Every request but `whoami` is refused with 403 unless it comes from the home network (private
+addresses, link-local, Tailscale's). Until the dashboard lets a device in, only `hello` answers
+it; a body over 1 MB from it isn't read at all.
 
 ### hello
 
 - `shares` is true once this device has been allowed in the dashboard. Until then the answer
   is still signed, with `shares: false`, and Settings tells the user to allow
   "Utako on … (id)" there.
-- `files` is any string that changes when the library does, such as a counter or a hash.
+- `files` is any string that changes when the library does (the music side's is a counter).
   Utako asks for the library once per start, then again only when `files` changes.
+- `uploads` is true once the dashboard has turned on "Let it upload here" for this device.
 - Utako says hello on start, after a settings change, when "Connect again" is pressed, and
   every 2 minutes.
 
@@ -86,12 +101,17 @@ Each track looks like this:
 ```json
 {"path": "/music/Artist/Album/01 Song.flac", "title": "Song", "artist": "Artist",
  "album": "Album", "albumArtist": "Artist", "trackNo": 1, "discNo": 1,
- "durationMs": 215000, "addedAt": 1761955200}
+ "durationMs": 215000, "addedAt": 1761955200, "hasArt": true}
 ```
 
-- Only `path` is needed. The rest should come from the file's tags. An empty title shows
-  the file name instead.
-- `path` is what `/api/peer/local/file` takes. Utako never builds paths itself.
+- Only `path` is needed. The rest comes from the file's tags (read in Go, or by ffprobe for
+  the formats Go can't read), else from its name ("01 - Artist - Song.flac"). The lengths
+  come from ffprobe, a little after the songs. An empty title shows the file name instead.
+- `path` is what `/api/peer/local/file` and `/api/peer/music/art` take. Utako never builds
+  paths itself, and the server answers only for the songs in its library.
+- `hasArt`: the song has a cover, in the file or as an image next to it (`cover`, `folder`,
+  `front` or `album`, `.jpg`/`.png`/`.webp`). Utako fetches one per album folder and keeps it
+  in its art cache (`<cache>/art/server/`).
 
 ### file (a ticket)
 
@@ -116,6 +136,25 @@ Each track looks like this:
 - The server keeps one copy per account, the latest one sent. It only gives it to devices it
   has allowed.
 
+## uploads
+
+The same as the Aniko and KumoBox apps' uploads to a server (mediaserver's
+`*/internal/upload`):
+
+- `GET /api/peer/upload` lists the server's music folders (Utako uses the first) and the most
+  a piece may hold (8 MB). It's refused unless the dashboard lets this device upload.
+- For each file: `GET …?folder=0&path=<its place, slashes between folders>&total=<size>` says
+  how much is there (`have`), or that it's `done` (the same file, by its size, is there). A
+  409 means another file has its name there: it isn't sent over it.
+- Then `POST …&offset=<have>` with the next piece in the body (`application/octet-stream`,
+  signed like any request: its SHA-256 is in the token). Utako sends 2 MB pieces, so its
+  progress bar moves. The answer is where it stands now; a 409 means the piece doesn't follow
+  on from what's there, and Utako asks again where it stands.
+- The file is written as `<name>.part` and takes its name once it's whole. The server's
+  library reads it a moment later, and `files` changes.
+- A folder keeps its name: `Album/01 Song.flac`. Utako sends its songs, covers, lyrics
+  (`.lrc`) and cue sheets, and leaves hidden files behind.
+
 ## What Utako keeps (cache)
 
 - The server's songs are stored as tracks of their own kind ("Media server", id
@@ -126,13 +165,14 @@ Each track looks like this:
   connected.
 - Utako remembers the ID of the first server it connected to. If a different server answers
   at the same address, Utako refuses it.
-- Lyrics come from Utako's usual sources. There is no cover art for server songs yet.
+- A song whose tags (or cover) changed on the server is updated in Utako's library too.
+- Lyrics come from Utako's usual sources.
 
 ## Later
 
 These aren't in Utako yet:
 
-- Cover art: something like `GET /api/peer/music/art?path=…`, answered as an image.
 - Settings that sync on their own. That would need an `updatedAt` comparison, and the
   endpoints above already carry it.
 - Downloading songs for offline play, on iPhone in particular.
+- Uploads from the iPhone app (it has no file picker for them).

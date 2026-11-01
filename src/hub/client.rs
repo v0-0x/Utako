@@ -40,6 +40,9 @@ pub struct Hello {
     /// Changes when its library does.
     #[serde(default)]
     pub files: String,
+    /// It takes songs from this device too (its dashboard's "Let it upload here").
+    #[serde(default)]
+    pub uploads: bool,
 }
 
 /// A song in the server's library.
@@ -64,6 +67,9 @@ pub struct ServerTrack {
     pub duration_ms: u64,
     #[serde(default)]
     pub added_at: i64,
+    /// It has a cover (`/api/peer/music/art?path=`).
+    #[serde(default)]
+    pub has_art: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -82,6 +88,37 @@ pub struct Sealed {
     #[serde(default)]
     pub updated_at: i64,
 }
+
+/// Where uploads go on the server: its library folders, and the most one piece may hold.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UploadTarget {
+    #[serde(default)]
+    pub folders: Vec<String>,
+    #[serde(default)]
+    pub chunk: u64,
+}
+
+/// Where a file being uploaded stands on the server.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct UploadAnswer {
+    #[serde(default)]
+    have: u64,
+    #[serde(default)]
+    done: bool,
+}
+
+/// What became of a file sent to the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Uploaded {
+    Sent,
+    /// The same file (by its size) was there already.
+    AlreadyThere,
+    /// Another file has its name there: it isn't sent over it.
+    Different,
+}
+
+/// The most a piece of an upload holds (the server's limit too).
+pub const MAX_PIECE: u64 = 8 << 20;
 
 /// A server found or typed: where it is and who it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +205,25 @@ impl Client {
 
     /// A signed request; its answer must be signed by the server.
     async fn request(&self, server: &Server, method: reqwest::Method, uri: &str, body: Vec<u8>) -> Result<Vec<u8>> {
+        let (status, bytes) = self.send(server, method, uri, body, "application/json", None).await?;
+        // Refusals are reported as they are.
+        if !(200..300).contains(&status) {
+            bail!("{}", error_text(status, &bytes));
+        }
+        Ok(bytes)
+    }
+
+    /// A signed request: its status and body. An accepted answer must be signed by the server;
+    /// a refusal is given as it is.
+    async fn send(
+        &self,
+        server: &Server,
+        method: reqwest::Method,
+        uri: &str,
+        body: Vec<u8>,
+        content_type: &str,
+        timeout: Option<Duration>,
+    ) -> Result<(u16, Vec<u8>)> {
         let signed = self.identity.sign(
             &server.host,
             method.as_str(),
@@ -184,7 +240,10 @@ impl Client {
             req = req.header(*name, value);
         }
         if !body.is_empty() {
-            req = req.header("Content-Type", "application/json").body(body);
+            req = req.header("Content-Type", content_type).body(body);
+        }
+        if let Some(t) = timeout {
+            req = req.timeout(t);
         }
         let resp = req
             .send()
@@ -200,18 +259,13 @@ impl Client {
         };
         let (date, reply) = (header("Date"), header(HEADER_REPLY));
         let bytes = crate::http::read_capped(resp, 64 << 20).await?;
-        // Refusals are reported as they are; anything accepted must come from the server.
-        if !status.is_success() {
-            let error = serde_json::from_slice::<serde_json::Value>(&bytes)
-                .ok()
-                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned))
-                .unwrap_or_else(|| status.to_string());
-            bail!("{error}");
+        // Anything accepted must come from the server.
+        if status.is_success() {
+            self.identity
+                .check_reply(&server.host, &signed.nonce, &date, &reply)
+                .map_err(|e| anyhow!("{}: {e}", server.name))?;
         }
-        self.identity
-            .check_reply(&server.host, &signed.nonce, &date, &reply)
-            .map_err(|e| anyhow!("{}: {e}", server.name))?;
-        Ok(bytes)
+        Ok((status.as_u16(), bytes))
     }
 
     pub async fn get_json<T: DeserializeOwned>(&self, server: &Server, uri: &str) -> Result<T> {
@@ -251,6 +305,135 @@ impl Client {
         let s: Sealed = self.get_json(server, "/api/peer/music/settings").await?;
         self.identity.open_from(&server.host, &s.sealed)
     }
+
+    /// A song's cover on the server (`None`: it has none).
+    pub async fn art(&self, server: &Server, path: &str) -> Result<Option<Vec<u8>>> {
+        let uri = format!("/api/peer/music/art?path={}", query_escape(path));
+        let (status, bytes) = self
+            .send(server, reqwest::Method::GET, &uri, Vec::new(), "", None)
+            .await?;
+        match status {
+            200..=299 => Ok(Some(bytes)),
+            404 => Ok(None),
+            _ => bail!("{}", error_text(status, &bytes)),
+        }
+    }
+
+    /// Where uploads go on the server; refused unless it lets this device upload.
+    pub async fn upload_target(&self, server: &Server) -> Result<UploadTarget> {
+        self.get_json(server, "/api/peer/upload").await
+    }
+
+    /// Sends `file` into the server's library folder `folder`, as `rel` there (slashes between
+    /// folders), a piece at a time from where the server has it: an upload cut short carries
+    /// on where it stopped. `sent` hears how much of it is there after each piece.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upload_file(
+        &self,
+        server: &Server,
+        folder: usize,
+        rel: &str,
+        file: &std::path::Path,
+        chunk: u64,
+        stop: &std::sync::atomic::AtomicBool,
+        mut sent: impl FnMut(u64),
+    ) -> Result<Uploaded> {
+        use std::sync::atomic::Ordering;
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let total = tokio::fs::metadata(file)
+            .await
+            .with_context(|| format!("couldn't read {}", file.display()))?
+            .len();
+        let chunk = chunk.clamp(64 << 10, MAX_PIECE);
+        let path = query_escape(rel);
+        let ask = |offset: Option<u64>| {
+            let at = offset.map(|o| format!("&offset={o}")).unwrap_or_default();
+            format!("/api/peer/upload?folder={folder}&path={path}&total={total}{at}")
+        };
+        // Where it stands there (a piece may come back refused: then again from there).
+        let stands = |status: u16, bytes: &[u8]| -> Result<Option<UploadAnswer>> {
+            match status {
+                200..=299 => Ok(Some(
+                    serde_json::from_slice(bytes).context("unexpected answer from the server")?,
+                )),
+                409 => Ok(None),
+                _ => bail!("{}", error_text(status, bytes)),
+            }
+        };
+        let (status, bytes) = self
+            .send(server, reqwest::Method::GET, &ask(None), Vec::new(), "", None)
+            .await?;
+        let Some(first) = stands(status, &bytes)? else {
+            return Ok(Uploaded::Different);
+        };
+        if first.done {
+            sent(total);
+            return Ok(Uploaded::AlreadyThere);
+        }
+        let mut have = first.have;
+        let mut f = tokio::fs::File::open(file)
+            .await
+            .with_context(|| format!("couldn't read {}", file.display()))?;
+        let mut refused = 0;
+        loop {
+            sent(have);
+            if stop.load(Ordering::Relaxed) {
+                bail!("stopped");
+            }
+            let n = chunk.min(total.saturating_sub(have));
+            let mut piece = vec![0u8; n as usize];
+            f.seek(std::io::SeekFrom::Start(have)).await?;
+            f.read_exact(&mut piece)
+                .await
+                .with_context(|| format!("couldn't read {}", file.display()))?;
+            // A piece takes as long as the network needs.
+            let (status, bytes) = self
+                .send(
+                    server,
+                    reqwest::Method::POST,
+                    &ask(Some(have)),
+                    piece,
+                    "application/octet-stream",
+                    Some(Duration::from_secs(600)),
+                )
+                .await?;
+            match stands(status, &bytes)? {
+                Some(a) if a.done => {
+                    sent(total);
+                    return Ok(Uploaded::Sent);
+                }
+                Some(a) => {
+                    refused = 0;
+                    have = a.have;
+                }
+                // Refused: it doesn't follow on from what's there (asked again), or another
+                // file has its name.
+                None => {
+                    refused += 1;
+                    if refused > 3 {
+                        bail!("{}", error_text(status, &bytes));
+                    }
+                    let (status, bytes) = self
+                        .send(server, reqwest::Method::GET, &ask(None), Vec::new(), "", None)
+                        .await?;
+                    match stands(status, &bytes)? {
+                        None => return Ok(Uploaded::Different),
+                        Some(a) if a.done => return Ok(Uploaded::AlreadyThere),
+                        Some(a) => have = a.have,
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A refusal's `{"error": "…"}` text, or its status.
+fn error_text(status: u16, bytes: &[u8]) -> String {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned))
+        .unwrap_or_else(|| format!("the server answered {status}"))
 }
 
 #[cfg(test)]
@@ -264,38 +447,67 @@ mod tests {
         assert_eq!(base_url("192.168.1.5:5000"), "http://192.168.1.5:5000");
     }
 
-    /// Against a stand-in music side made from mediaserver's own share code (UTAKO_STANDIN
-    /// is its address): hello before and after it allows this device, the library, settings
-    /// there and back, and a song mpv streams with a ticket and seeks in.
-    /// `UTAKO_STANDIN=127.0.0.1:43499 cargo test -- --ignored stand_in_server`
+    /// Against a real mediaserver's music side (UTAKO_SERVER is its address; UTAKO_DASHBOARD
+    /// and UTAKO_SESSION its dashboard and a signed-in `kumo_session` cookie, which let the
+    /// test's devices in): hello before and after it allows this device, the library, covers,
+    /// settings there and back, a song mpv streams with a ticket and seeks in, and an upload
+    /// stopped and carried on. Its library needs a song of 20 s or more, and one with a cover.
+    /// `UTAKO_SERVER=10.77.0.1 UTAKO_DASHBOARD=http://10.77.0.1:43211 UTAKO_SESSION=… \
+    ///  cargo test --release -- --ignored real_server`
     #[tokio::test]
     #[ignore]
-    async fn stand_in_server() {
+    async fn real_server() {
         use crate::player::mpv::{Mpv, MpvOptions};
         use serde_json::{json, Value};
+        use std::sync::atomic::{AtomicBool, Ordering};
 
-        let address = std::env::var("UTAKO_STANDIN").expect("UTAKO_STANDIN");
+        let address = std::env::var("UTAKO_SERVER").expect("UTAKO_SERVER");
+        let dashboard = std::env::var("UTAKO_DASHBOARD").expect("UTAKO_DASHBOARD");
+        let session = std::env::var("UTAKO_SESSION").expect("UTAKO_SESSION");
+        let let_in = |id: String, change: Value| {
+            let (dashboard, session) = (dashboard.clone(), session.clone());
+            async move {
+                reqwest::Client::builder()
+                    .no_proxy()
+                    .build()
+                    .unwrap()
+                    .post(format!("{dashboard}/api/music/devices/{id}"))
+                    .header("Cookie", format!("kumo_session={session}"))
+                    .json(&change)
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap();
+            }
+        };
         let client = Client::new(
             Arc::new(Identity::from_private(rand::random())),
             "Utako on test, with a comma".into(),
         );
         let base = base_url(&address);
         let server = client.whoami(&base).await.unwrap();
-        assert_eq!(server.name, "Test Pi");
+        assert!(!server.name.is_empty());
 
+        // Not let in yet: hello says so, the rest is refused.
         let hello = client.hello(&server).await.unwrap();
         assert!(!hello.shares, "not allowed yet");
-        assert!(client.library(&server).await.is_err(), "no library before it's allowed");
-        reqwest::get(format!("{base}/test/allow?id={}", client.identity.id))
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap();
+        let refused = client.library(&server).await.unwrap_err().to_string();
+        assert!(refused.contains("Utako on test, with a comma"), "{refused}");
+        let_in(client.identity.id.clone(), json!({"allowed": true})).await;
         let hello = client.hello(&server).await.unwrap();
-        assert!(hello.shares);
+        assert!(hello.shares && !hello.uploads);
         let lib = client.library(&server).await.unwrap();
-        assert_eq!(lib.tracks.len(), 3);
+        assert!(!lib.tracks.is_empty());
         assert_eq!(lib.version, hello.files);
+
+        // Covers: one there, one not (or none at all).
+        let with = lib.tracks.iter().find(|t| t.has_art).expect("a song with a cover");
+        let art = client.art(&server, &with.path).await.unwrap().expect("its cover");
+        assert!(image::load_from_memory(&art).is_ok(), "the cover is a picture");
+        if let Some(without) = lib.tracks.iter().find(|t| !t.has_art) {
+            assert!(client.art(&server, &without.path).await.unwrap().is_none());
+        }
 
         // Settings: sent from this device, and fetched by another one the server allowed.
         let file = r#"{"version":1,"hasKeys":true,"note":"é and commas, too"}"#.as_bytes();
@@ -305,17 +517,21 @@ mod tests {
             Arc::new(Identity::from_private(rand::random())),
             "Utako on phone".into(),
         );
+        assert!(other_device.hello(&server).await.is_ok());
         assert!(
             other_device.fetch_settings(&server).await.is_err(),
             "only for allowed devices"
         );
-        reqwest::get(format!("{base}/test/allow?id={}", other_device.identity.id))
-            .await
-            .unwrap();
+        let_in(other_device.identity.id.clone(), json!({"allowed": true})).await;
         assert_eq!(other_device.fetch_settings(&server).await.unwrap(), file);
 
         // A song, as playback starts it: a ticket in mpv's headers, then a seek.
-        let (url, headers) = server.file(&client, &lib.tracks[1].path).unwrap();
+        let song = lib
+            .tracks
+            .iter()
+            .find(|t| t.duration_ms >= 20_000)
+            .expect("a song of 20 s or more");
+        let (url, headers) = server.file(&client, &song.path).unwrap();
         let fields = headers
             .iter()
             .map(|(name, value)| format!("{name}: {value}"))
@@ -341,27 +557,98 @@ mod tests {
             async move { mpv.command(json!(["get_property", name])).await.unwrap_or(Value::Null) }
         };
         let duration = prop("duration").await.as_f64().unwrap_or(0.0);
-        assert!((duration - 30.0).abs() < 1.0, "it plays (duration {duration})");
-        mpv.command(json!(["seek", 20.0, "absolute"])).await.unwrap();
+        let want = song.duration_ms as f64 / 1000.0;
+        assert!(
+            (duration - want).abs() < 1.0,
+            "it plays (duration {duration}, {want} said)"
+        );
+        mpv.command(json!(["seek", want - 5.0, "absolute"])).await.unwrap();
         tokio::time::sleep(Duration::from_secs(2)).await;
         let at = prop("time-pos").await.as_f64().unwrap_or(0.0);
-        assert!(at >= 20.0, "it seeks (at {at})");
+        assert!(at >= want - 5.0, "it seeks (at {at})");
         mpv.quit().await;
 
         // The same ticket again, as mpv sends it when it seeks past what it has.
-        let mut again = reqwest::Client::new().get(&url).header("Range", "bytes=1000-");
+        let plain = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut again = plain.get(&url).header("Range", "bytes=1000-");
         for (name, value) in &headers {
             again = again.header(*name, value);
         }
         assert_eq!(again.send().await.unwrap().status(), 206);
-
         // A ticket for one file doesn't open another.
-        let (other, _) = server.file(&client, &lib.tracks[0].path).unwrap();
-        let mut req = reqwest::Client::new().get(&other);
-        for (name, value) in &headers {
-            req = req.header(*name, value);
+        if let Some(other) = lib.tracks.iter().find(|t| t.path != song.path) {
+            let (other, _) = server.file(&client, &other.path).unwrap();
+            let mut req = plain.get(&other);
+            for (name, value) in &headers {
+                req = req.header(*name, value);
+            }
+            assert_eq!(req.send().await.unwrap().status(), 403);
         }
-        assert_eq!(req.send().await.unwrap().status(), 403);
+
+        // Uploads: refused until the dashboard lets it, then a song of three pieces, stopped
+        // after the first and carried on; sent again, it's there; another file of that name
+        // isn't sent over it.
+        assert!(client.upload_target(&server).await.is_err());
+        let_in(client.identity.id.clone(), json!({"uploads": true})).await;
+        assert!(client.hello(&server).await.unwrap().uploads);
+        let target = client.upload_target(&server).await.unwrap();
+        assert!(!target.folders.is_empty() && target.chunk > 0);
+        let tmp = tempfile::tempdir().unwrap();
+        let big = tmp.path().join("big.mp3");
+        let bytes: Vec<u8> = (0..(MAX_PIECE * 2 + 12_345)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&big, &bytes).unwrap();
+        let rel = format!("Utako upload test {}/big.mp3", rand::random::<u32>());
+        let stop = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let first = client
+            .upload_file(&server, 0, &rel, &big, target.chunk, &stop, |have| {
+                seen.push(have);
+                if have > 0 {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            })
+            .await;
+        assert!(first.is_err(), "stopped");
+        assert_eq!(seen, vec![0, MAX_PIECE]);
+        stop.store(false, Ordering::Relaxed);
+        let mut seen = Vec::new();
+        let done = client
+            .upload_file(&server, 0, &rel, &big, target.chunk, &stop, |have| seen.push(have))
+            .await
+            .unwrap();
+        assert_eq!(done, Uploaded::Sent);
+        assert_eq!(seen.first(), Some(&MAX_PIECE), "carried on where it stopped");
+        assert_eq!(seen.last(), Some(&(bytes.len() as u64)));
+        let again = client
+            .upload_file(&server, 0, &rel, &big, target.chunk, &stop, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(again, Uploaded::AlreadyThere);
+        let other = tmp.path().join("other.mp3");
+        std::fs::write(&other, b"another file").unwrap();
+        let different = client
+            .upload_file(&server, 0, &rel, &other, target.chunk, &stop, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(different, Uploaded::Different);
+        // The server reads it in a moment: its library has it then.
+        let mut found = false;
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            if client.hello(&server).await.unwrap().files != lib.version {
+                found = client
+                    .library(&server)
+                    .await
+                    .unwrap()
+                    .tracks
+                    .iter()
+                    .any(|t| t.path.ends_with(&rel));
+                if found {
+                    break;
+                }
+            }
+        }
+        assert!(found, "the upload is in the library");
     }
 
     #[test]

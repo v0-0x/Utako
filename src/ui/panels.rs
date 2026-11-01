@@ -567,7 +567,7 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
                 match &update.status {
                     UpdateStatus::Downloading(done) => {
                         ui.label(format!("Downloading Utako {shown}…"));
-                        ui.add(egui::ProgressBar::new(*done).desired_width(160.0).show_percentage());
+                        super::widgets::progress(ui, *done, 160.0);
                     }
                     UpdateStatus::NeedsPassword { .. } => {
                         ui.label(format!(

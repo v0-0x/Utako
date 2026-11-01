@@ -38,7 +38,7 @@ mod server;
 mod sync;
 mod updates;
 
-pub use server::ServerFeed;
+pub use server::{ServerFeed, SONG_EXTENSIONS as SERVER_SONG_EXTENSIONS};
 
 use self::{pages::*, sync::*};
 
@@ -155,6 +155,10 @@ pub enum Command {
     ServerSendSettings,
     /// Takes the settings and logins the media server keeps.
     ServerFetchSettings,
+    /// Uploads a song, or a folder of them, to the media server's library.
+    ServerUpload(PathBuf),
+    /// Stops the upload under way.
+    ServerUploadStop,
     /// Saves the settings (and optionally keys, logins and your playlists) to a file.
     ExportSettings {
         path: PathBuf,
@@ -593,6 +597,10 @@ enum Internal {
     ServerFound(crate::hub::discovery::Found),
     ServerState(Box<server::ServerState>),
     ServerSettings(Result<Vec<u8>>),
+    /// The server's covers fetched (or not) since.
+    ServerArt(Vec<String>),
+    ServerUpload(server::UploadFeed),
+    ServerUploadDone(Result<server::UploadSummary>),
     PageLoaded {
         key: String,
         result: Result<PageState>,
@@ -804,6 +812,12 @@ pub struct Service {
     server_listening: bool,
     server_checked: Option<Instant>,
     server_library_version: String,
+    /// The server's library as last read (its covers are put on it as they arrive).
+    server_library: Option<crate::hub::client::Library>,
+    /// The server's covers asked for (fetched, being fetched, or not there).
+    server_art_asked: HashSet<String>,
+    /// Stops the upload under way.
+    server_upload_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// The load waited on (its number) and since when, to notice one that never starts.
     loading_since: Option<(u64, Instant)>,
     /// The load that was a retry after a stream broke off (only one retry per song).
@@ -962,6 +976,9 @@ impl Service {
             server_listening: false,
             server_checked: None,
             server_library_version: String::new(),
+            server_library: None,
+            server_art_asked: HashSet::new(),
+            server_upload_stop: None,
             loading_since: None,
             retried_load: 0,
             page_cache: Vec::new(),
@@ -1381,6 +1398,8 @@ impl Service {
             Command::ServerConnect => self.server_connect(),
             Command::ServerSendSettings => self.send_settings_to_server(),
             Command::ServerFetchSettings => self.fetch_settings_from_server(),
+            Command::ServerUpload(path) => self.upload_to_server(path),
+            Command::ServerUploadStop => self.stop_server_upload(),
             Command::CheckUpdates { manual } => self.check_updates(manual),
             Command::InstallUpdate => self.install_update(),
             Command::AuthorizeUpdate(password) => self.authorize_update(password),
@@ -2035,6 +2054,9 @@ impl Service {
             Internal::ServerFound(found) => self.server_found(found),
             Internal::ServerState(state) => self.server_state(*state),
             Internal::ServerSettings(result) => self.server_settings(result),
+            Internal::ServerArt(keys) => self.server_art(keys),
+            Internal::ServerUpload(feed) => self.server_upload_progress(feed),
+            Internal::ServerUploadDone(result) => self.server_upload_done(result),
             Internal::SoundCloudClientId(id) => {
                 if self.db.get_kv("soundcloud_client_id").as_deref() != Some(id.as_str()) {
                     let _ = self.db.set_kv("soundcloud_client_id", &id);
