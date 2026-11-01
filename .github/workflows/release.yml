@@ -82,7 +82,7 @@ jobs:
               gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body \
                 | sed '1{/^\*\*Beta\.\*\*/{N;d}}' > notes.md
               gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest \
-                --title "Sumo $VERSION" --notes-file notes.md
+                --title "Utako $VERSION" --notes-file notes.md
               echo "::notice::v$VERSION was a beta and is now the stable release"
             elif [ "$IS_BETA" = false ] && [ "$CHANNEL" = demote ]; then
               # Back to a beta. Copies that already updated keep it; the others are offered
@@ -91,7 +91,7 @@ jobs:
                 echo
                 gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body; } > notes.md
               gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
-                --title "Sumo $VERSION beta" --notes-file notes.md
+                --title "Utako $VERSION beta" --notes-file notes.md
               PREVIOUS=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts \
                 --limit 1 --json tagName --jq '.[0].tagName')
               if [ -n "$PREVIOUS" ]; then
@@ -189,7 +189,7 @@ jobs:
           $version = (& stage\tools\mpv.exe --no-config --version 2>&1 | Out-String)
           if ($version -notmatch 'mpv v?\d') { $version; throw "mpv doesn't run" }
           ($version -split "`n")[0]
-          # Talk to mpv the way Sumo does: over a named pipe.
+          # Talk to mpv the way Utako does: over a named pipe.
           $mpv = Start-Process stage\tools\mpv.exe -ArgumentList '--no-config','--idle=yes','--no-terminal','--video=no','--input-ipc-server=\\.\pipe\multimusic-ci' -PassThru
           $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'multimusic-ci', [System.IO.Pipes.PipeDirection]::InOut)
           $pipe.Connect(10000)
@@ -213,8 +213,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Copy-Item target\release\multimusic.exe stage\
-          dl\rcedit.exe stage\multimusic.exe --set-icon assets\sumo.ico `
-            --set-version-string ProductName Sumo --set-version-string FileDescription Sumo `
+          dl\rcedit.exe stage\multimusic.exe --set-icon assets\utako.ico `
+            --set-version-string ProductName Utako --set-version-string FileDescription Utako `
             --set-version-string CompanyName v0-0x --set-file-version $env:VERSION --set-product-version $env:VERSION
           if ($LASTEXITCODE -ne 0) { throw "rcedit failed" }
           Copy-Item LICENSE stage\LICENSE.txt
@@ -229,7 +229,7 @@ jobs:
             choco install innosetup -y --no-progress
             $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           }
-          & $iscc /Qp "/DAppVersion=$env:VERSION" "/DStage=..\..\stage" packaging\windows\sumo.iss
+          & $iscc /Qp "/DAppVersion=$env:VERSION" "/DStage=..\..\stage" packaging\windows\utako.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
           Get-ChildItem dist
 
@@ -239,15 +239,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $setup = Get-ChildItem dist\Sumo-Setup-*.exe | Select-Object -First 1
+          $setup = Get-ChildItem dist\Utako-Setup-*.exe | Select-Object -First 1
           $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "installer exited with $($p.ExitCode)" }
-          $dir = "$env:LOCALAPPDATA\Programs\Sumo"
+          $dir = "$env:LOCALAPPDATA\Programs\Utako"
           $app = "$dir\multimusic.exe"
           if (-not (Test-Path $app)) { throw "not installed at $app" }
           Get-ChildItem $dir -Recurse | Select-Object -First 40 | ForEach-Object { $_.FullName }
           Get-Process multimusic -ErrorAction SilentlyContinue | Stop-Process -Force
-          # CI machines have no GPU (OpenGL 1.1 only): for this test only, Sumo gets Mesa's
+          # CI machines have no GPU (OpenGL 1.1 only): for this test only, Utako gets Mesa's
           # software OpenGL next to it. Real PCs use their graphics driver.
           $mesa = gh api repos/pal1000/mesa-dist-win/releases/latest | ConvertFrom-Json
           $m = $mesa.assets | Where-Object { $_.name -match 'release-msvc\.7z$' } | Select-Object -First 1
@@ -265,18 +265,22 @@ jobs:
           $running = Get-Process multimusic -ErrorAction SilentlyContinue
           if (-not $running) {
             Get-Content "$env:APPDATA\multimusic\data\multimusic.log" -ErrorAction SilentlyContinue
-            throw "Sumo didn't stay running"
+            throw "Utako didn't stay running"
           }
-          Write-Host "Sumo is running, using $([math]::Round($running[0].WorkingSet64 / 1MB)) MB"
+          Write-Host "Utako is running, using $([math]::Round($running[0].WorkingSet64 / 1MB)) MB"
           Get-Content "$env:APPDATA\multimusic\data\multimusic.log" -ErrorAction SilentlyContinue
           $running | Stop-Process -Force
           # Clean up the test (the Mesa files must not stay).
           Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -Wait
 
+      # Copies under the old name: Sumo 0.8.0 and older look for Sumo-Setup-<version>-x64.exe.
+      - name: Copy for older versions' updater
+        run: Copy-Item "dist\Utako-Setup-$env:VERSION-x64.exe" "dist\Sumo-Setup-$env:VERSION-x64.exe"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows
-          path: dist/Sumo-Setup-*.exe
+          path: dist/*-Setup-*.exe
           if-no-files-found: error
 
   macos:
@@ -361,7 +365,7 @@ jobs:
       - name: Build the app
         run: |
           set -euo pipefail
-          app=dist/Sumo.app
+          app=dist/Utako.app
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp target/${{ matrix.target }}/release/multimusic "$app/Contents/MacOS/"
           sed "s/@VERSION@/$VERSION/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
@@ -370,7 +374,7 @@ jobs:
             sips -z $s $s assets/icon-1024.png --out icon.iconset/icon_${s}x${s}.png > /dev/null
             sips -z $((s*2)) $((s*2)) assets/icon-1024.png --out icon.iconset/icon_${s}x${s}@2x.png > /dev/null
           done
-          iconutil -c icns icon.iconset -o "$app/Contents/Resources/sumo.icns"
+          iconutil -c icns icon.iconset -o "$app/Contents/Resources/utako.icns"
           cp -R tools fonts mpv.app "$app/Contents/Resources/"
           cp LICENSE packaging/THIRD-PARTY.txt "$app/Contents/Resources/"
           # Ad-hoc signature (needed to run on Apple Silicon); no Apple developer account.
@@ -381,7 +385,7 @@ jobs:
         if: matrix.arch == 'arm64'
         run: |
           set -euo pipefail
-          app=dist/Sumo.app
+          app=dist/Utako.app
           "$app/Contents/Resources/mpv.app/Contents/MacOS/mpv" --no-config --version | head -1
           "$app/Contents/Resources/tools/ffmpeg" -hide_banner -version | head -1
           "$app/Contents/Resources/tools/yt-dlp" --version
@@ -396,13 +400,16 @@ jobs:
       - name: Package
         run: |
           set -euo pipefail
-          name="Sumo-$VERSION-macos-${{ matrix.arch }}"
-          ditto -c -k --sequesterRsrc --keepParent dist/Sumo.app "dist/$name.zip"
-          mkdir dmg && cp -R dist/Sumo.app dmg/ && ln -s /Applications dmg/Applications
+          name="Utako-$VERSION-macos-${{ matrix.arch }}"
+          ditto -c -k --sequesterRsrc --keepParent dist/Utako.app "dist/$name.zip"
+          # A copy under the old name: Sumo 0.8.0 and older look for Sumo-<version>-macos-<arch>.zip.
+          # Their updater puts Utako.app where Sumo.app was and opens it from there.
+          cp "dist/$name.zip" "dist/Sumo-$VERSION-macos-${{ matrix.arch }}.zip"
+          mkdir dmg && cp -R dist/Utako.app dmg/ && ln -s /Applications dmg/Applications
           # hdiutil now and then fails with "Resource busy" on the hosted runners while another
           # disk image service still holds the volume; it works when tried again a bit later.
           for attempt in 1 2 3 4 5; do
-            if hdiutil create -volname "Sumo" -srcfolder dmg -ov -format UDZO "dist/$name.dmg"; then
+            if hdiutil create -volname "Utako" -srcfolder dmg -ov -format UDZO "dist/$name.dmg"; then
               break
             fi
             if [ "$attempt" = 5 ]; then
@@ -454,10 +461,11 @@ jobs:
           pacman -U --noconfirm dist/multimusic-*.pkg.tar.zst
           pacman -Qi multimusic | head -3
           test -x /usr/bin/multimusic
+          test -x /usr/bin/utako
           test -x /usr/bin/sumo
-          test -f /usr/share/icons/hicolor/scalable/apps/sumo.svg
-          test -f /usr/share/icons/hicolor/32x32/apps/sumo.png
-          grep -q "^Icon=sumo$" /usr/share/applications/multimusic.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/utako.svg
+          test -f /usr/share/icons/hicolor/32x32/apps/utako.png
+          grep -q "^Icon=utako$" /usr/share/applications/multimusic.desktop
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -509,12 +517,12 @@ jobs:
           cat > ../install.md <<EOF
           ## Install
 
-          - **Windows 10/11:** run \`Sumo-Setup-$VERSION-x64.exe\`. It installs for your user (no administrator prompt) with everything Sumo needs (mpv, yt-dlp, ffmpeg).
-          - **macOS 11+:** open the \`.dmg\` for your Mac (**arm64** for Apple Silicon M1/M2/M3/M4, **intel** for Intel Macs) and drag Sumo to Applications. The app isn't notarized by Apple, so the first time: right-click Sumo → Open → Open (or System Settings → Privacy & Security → Open Anyway).
+          - **Windows 10/11:** run \`Utako-Setup-$VERSION-x64.exe\`. It installs for your user (no administrator prompt) with everything Utako needs (mpv, yt-dlp, ffmpeg).
+          - **macOS 11+:** open the \`.dmg\` for your Mac (**arm64** for Apple Silicon M1/M2/M3/M4, **intel** for Intel Macs) and drag Utako to Applications. The app isn't notarized by Apple, so the first time: right-click Utako → Open → Open (or System Settings → Privacy & Security → Open Anyway).
           - **Arch Linux (x86_64):** \`sudo pacman -U multimusic-*-x86_64.pkg.tar.zst\`, or build from the repository with \`makepkg -si\`.
-          - **iPhone and iPad (iOS 15+):** install \`Sumo-$VERSION-ios.ipa\` with Sideloadly or AltStore (signed with your Apple ID; a free one needs signing again every 7 days) or TrollStore. Put music in the Files app under On My iPhone › Sumo.
+          - **iPhone and iPad (iOS 15+):** install \`Utako-$VERSION-ios.ipa\` with Sideloadly or AltStore (signed with your Apple ID; a free one needs signing again every 7 days) or TrollStore. Put music in the Files app under On My iPhone › Utako.
 
-          Sumo checks for updates by itself and installs them with one click.
+          Utako (called Sumo until 0.9.0) checks for updates by itself and installs them with one click. The \`Sumo-…\` files are the same app, for older versions' updater.
           EOF
           if [ -s ../changes.md ]; then
             { echo "## What's new"; echo; cat ../changes.md; echo; cat ../install.md; } > ../notes.md
@@ -527,8 +535,8 @@ jobs:
           if [ "$BETA" = true ]; then
             { echo "**Beta.** Offered to copies with *Settings › Updates › Beta updates* on; everyone else gets it once it's made the stable release."; echo; cat ../notes.md; } > ../beta-notes.md
             gh release create "v$VERSION" ./* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Sumo $VERSION beta" --notes-file ../beta-notes.md --prerelease --latest=false
+              --title "Utako $VERSION beta" --notes-file ../beta-notes.md --prerelease --latest=false
           else
             gh release create "v$VERSION" ./* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Sumo $VERSION" --notes-file ../notes.md
+              --title "Utako $VERSION" --notes-file ../notes.md
           fi

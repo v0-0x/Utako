@@ -1,4 +1,4 @@
-//! iOS: the audio session that keeps Sumo playing with the screen locked or another app in
+//! iOS: the audio session that keeps Utako playing with the screen locked or another app in
 //! front, and the song and controls on the lock screen, in Control Center and on headphones
 //! (MediaPlayer's Now Playing and remote commands). Plain Objective-C messages through objc2,
 //! so no binding crates are needed.
@@ -58,7 +58,7 @@ fn ns_number(value: f64) -> Option<Retained<AnyObject>> {
     unsafe { msg_send![cls, numberWithDouble: value] }
 }
 
-/// Sets the audio session to "playback": Sumo keeps playing in the background (with the
+/// Sets the audio session to "playback": Utako keeps playing in the background (with the
 /// audio background mode in Info.plist) and ignores the ring/silent switch, like other music
 /// apps. Called once at start, before any audio is opened.
 pub fn start_audio_session() {

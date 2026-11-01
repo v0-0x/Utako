@@ -40,7 +40,7 @@ pub fn song(title: &str, artist: &str, album: &str) {
                 Some("org.freedesktop.Notifications"),
                 "Notify",
                 &(
-                    "Sumo",
+                    "Utako",
                     replaces,
                     "sumo",
                     summary.as_str(),

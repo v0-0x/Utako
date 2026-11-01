@@ -1,5 +1,5 @@
 //! Updates from GitHub releases. A new version is downloaded, checked against the release's
-//! SHA-256 sums and installed: on Windows the installer runs silently and starts Sumo
+//! SHA-256 sums and installed: on Windows the installer runs silently and starts Utako
 //! again, on macOS the app is swapped in place, and on Arch Linux the release's package is
 //! installed with `sudo pacman -U` after asking for the password.
 
@@ -38,17 +38,17 @@ pub struct Asset {
 /// Whether `name` is what this platform downloads from the release of `version`.
 pub fn is_platform_asset(name: &str, version: &str) -> bool {
     if cfg!(windows) {
-        name == format!("Sumo-Setup-{version}-x64.exe")
+        name == format!("Utako-Setup-{version}-x64.exe")
     } else if cfg!(target_os = "ios") {
         // Shown, not installed: iOS apps can't replace themselves.
-        name == format!("Sumo-{version}-ios.ipa")
+        name == format!("Utako-{version}-ios.ipa")
     } else if cfg!(target_os = "macos") {
         let arch = if cfg!(target_arch = "aarch64") {
             "arm64"
         } else {
             "intel"
         };
-        name == format!("Sumo-{version}-macos-{arch}.zip")
+        name == format!("Utako-{version}-macos-{arch}.zip")
     } else {
         is_arch_package(name, version, std::env::consts::ARCH)
     }
@@ -273,7 +273,7 @@ pub fn verify(file: &Path, name: &str, sums: &str) -> Result<()> {
     Ok(())
 }
 
-/// A new, empty folder for an update's download inside `base` (Sumo's own cache folder, which
+/// A new, empty folder for an update's download inside `base` (Utako's own cache folder, which
 /// only this user can write to), readable by this user only. It is made afresh each time, so
 /// nobody else can have put files or links in it, and the checked download can't be swapped
 /// before it is installed (as root, on Linux).
@@ -310,12 +310,12 @@ pub fn is_plain_file_name(name: &str) -> bool {
         && Path::new(name).file_name() == Some(std::ffi::OsStr::new(name))
 }
 
-/// Starts installing a downloaded update. Sumo has to quit right after; the new
+/// Starts installing a downloaded update. Utako has to quit right after; the new
 /// version starts by itself.
 pub fn install(file: &Path) -> Result<()> {
     #[cfg(windows)]
     {
-        // The installer closes what is left of Sumo, installs over it and starts it.
+        // The installer closes what is left of Utako, installs over it and starts it.
         std::process::Command::new(file)
             .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
             .spawn()
@@ -440,20 +440,20 @@ pub fn relaunch() -> Result<()> {
         .stderr(std::process::Stdio::null())
         .process_group(0)
         .spawn()
-        .context("couldn't start Sumo again")?;
+        .context("couldn't start Utako again")?;
     Ok(())
 }
 
-/// macOS: unpacks the new Sumo.app and puts it where the running one is.
+/// macOS: unpacks the new Utako.app and puts it where the running one is.
 #[cfg(target_os = "macos")]
 fn install_app(zip: &Path) -> Result<()> {
     let exe = std::env::current_exe()?;
-    // …/Sumo.app/Contents/MacOS/multimusic (MultiMusic.app before the app was renamed)
+    // …/Utako.app/Contents/MacOS/multimusic (Sumo.app or MultiMusic.app under its old names)
     let bundle = exe
         .ancestors()
         .nth(3)
         .filter(|p| p.extension().is_some_and(|e| e == "app"))
-        .ok_or_else(|| anyhow!("Sumo isn't running from its app bundle"))?
+        .ok_or_else(|| anyhow!("Utako isn't running from its app bundle"))?
         .to_path_buf();
     let unpack = zip.with_extension("unpacked");
     let _ = std::fs::remove_dir_all(&unpack);
@@ -472,7 +472,7 @@ fn install_app(zip: &Path) -> Result<()> {
         .map(|e| e.path())
         .find(|p| p.extension().is_some_and(|e| e == "app"))
         .ok_or_else(|| anyhow!("the update has no app in it"))?;
-    // The app keeps the name it comes with, so MultiMusic.app becomes Sumo.app.
+    // The app keeps the name it comes with, so Sumo.app becomes Utako.app.
     let named = new_app
         .file_name()
         .map(|name| bundle.with_file_name(name))
@@ -520,7 +520,7 @@ fn install_app(zip: &Path) -> Result<()> {
         .arg(std::process::id().to_string())
         .arg(&target)
         .spawn()
-        .context("couldn't restart Sumo")?;
+        .context("couldn't restart Utako")?;
     Ok(())
 }
 
@@ -547,9 +547,9 @@ mod tests {
             "body": "Fixes",
             "html_url": "https://github.com/o/r/releases/tag/v0.3.0",
             "assets": [
-                {"name": "Sumo-Setup-0.3.0-x64.exe", "url": "https://api.github.com/a/1", "size": 10},
-                {"name": "Sumo-0.3.0-macos-arm64.zip", "url": "https://api.github.com/a/2", "size": 20},
-                {"name": "Sumo-0.3.0-macos-intel.zip", "url": "https://api.github.com/a/4", "size": 20},
+                {"name": "Utako-Setup-0.3.0-x64.exe", "url": "https://api.github.com/a/1", "size": 10},
+                {"name": "Utako-0.3.0-macos-arm64.zip", "url": "https://api.github.com/a/2", "size": 20},
+                {"name": "Utako-0.3.0-macos-intel.zip", "url": "https://api.github.com/a/4", "size": 20},
                 {"name": "multimusic-0.3.0.r130.gabc1234-1-x86_64.pkg.tar.zst", "url": "https://api.github.com/a/5", "size": 9},
                 {"name": "multimusic-0.3.0.r130.gabc1234-1-aarch64.pkg.tar.zst", "url": "https://api.github.com/a/6", "size": 9},
                 {"name": "SHA256SUMS.txt", "url": "https://api.github.com/a/3", "size": 1,
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn release_file_names_stay_file_names() {
-        assert!(is_plain_file_name("Sumo-Setup-0.5.1-x64.exe"));
+        assert!(is_plain_file_name("Utako-Setup-0.5.1-x64.exe"));
         assert!(is_plain_file_name("multimusic-0.5.1-1-x86_64.pkg.tar.zst"));
         for bad in ["", ".", "..", "../x", "a/b", "a\\b", "C:x", "/etc/passwd"] {
             assert!(!is_plain_file_name(bad), "{bad:?}");

@@ -26,8 +26,8 @@ pub struct Config {
     pub updates: UpdatesConfig,
 }
 
-/// The music folder Sumo starts with: the system's, or on iOS Sumo's own Documents folder,
-/// the one the Files app shows as On My iPhone › Sumo.
+/// The music folder Utako starts with: the system's, or on iOS Utako's own Documents folder,
+/// the one the Files app shows as On My iPhone › Utako.
 pub fn default_music_dir() -> Option<PathBuf> {
     let user = directories::UserDirs::new();
     if cfg!(target_os = "ios") {

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Sumo</string>
+    <string>Utako</string>
     <key>CFBundleDisplayName</key>
-    <string>Sumo</string>
+    <string>Utako</string>
     <key>CFBundleIdentifier</key>
     <string>io.github.simo1337s.multimusic</string>
     <key>CFBundleVersion</key>
@@ -89,8 +89,8 @@
     <array>
         <string>audio</string>
     </array>
-    <!-- Sumo's Documents folder shows in the Files app (On My iPhone › Sumo): music copied
-         there is Sumo's library, and settings files go there to be imported. -->
+    <!-- Utako's Documents folder shows in the Files app (On My iPhone › Utako): music copied
+         there is Utako's library, and settings files go there to be imported. -->
     <key>UIFileSharingEnabled</key>
     <true/>
     <key>LSSupportsOpeningDocumentsInPlace</key>

@@ -1,4 +1,4 @@
-//! New versions of Sumo, and settings files (export and import).
+//! New versions of Utako, and settings files (export and import).
 
 use super::*;
 

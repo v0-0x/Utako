@@ -147,7 +147,7 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
                         icon::PLUS_CIRCLE,
                         28.0,
                         pal().text_dim,
-                        "Save as a playlist in Sumo",
+                        "Save as a playlist in Utako",
                     )
                     .clicked()
                 {

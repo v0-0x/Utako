@@ -107,7 +107,7 @@ impl Mpv {
             .arg("--ytdl=no")
             .arg("--keep-open=no")
             .arg("--prefetch-playlist=yes")
-            .arg("--audio-client-name=Sumo")
+            .arg("--audio-client-name=Utako")
             // Cache network streams only; a few MB of demuxer buffer is plenty for audio.
             .arg("--cache=auto")
             .arg("--demuxer-max-bytes=4MiB")
@@ -405,7 +405,7 @@ async fn connect(path: &Path) -> std::io::Result<(IpcReader, IpcWriter)> {
     }
 }
 
-/// Stops players a previous Sumo left behind when it was killed (Linux ends them with
+/// Stops players a previous Utako left behind when it was killed (Linux ends them with
 /// the app; on Windows a job object does).
 pub fn stop_orphans() {
     // Older versions put sockets straight into /tmp.

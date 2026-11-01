@@ -312,7 +312,7 @@ impl Service {
         };
         self.set_account(
             |f| &mut f.lastfm,
-            AccountStatus::Working("Approve Sumo in your browser…".into()),
+            AccountStatus::Working("Approve Utako in your browser…".into()),
         );
         let tx = self.internal_tx.clone();
         tokio::spawn(async move {

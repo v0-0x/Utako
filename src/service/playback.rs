@@ -955,11 +955,11 @@ impl Service {
                             let mut feed = shared.feed.write().unwrap();
                             if !matches!(feed.lastfm, AccountStatus::Error(_)) {
                                 feed.lastfm = AccountStatus::Error(
-                                    "Last.fm logged Sumo out: connect again in Settings (scrobbles are kept meanwhile)"
+                                    "Last.fm logged Utako out: connect again in Settings (scrobbles are kept meanwhile)"
                                         .into(),
                                 );
                                 drop(feed);
-                                shared.error("Last.fm logged Sumo out: connect again in Settings to keep scrobbling");
+                                shared.error("Last.fm logged Utako out: connect again in Settings to keep scrobbling");
                             }
                         }
                         Err(e) => tracing::warn!("scrobble failed: {e:#}"),

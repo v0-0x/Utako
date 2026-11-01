@@ -49,14 +49,14 @@ pub fn take(ctx: &egui::Context, id: &'static str) -> Option<Result<PathBuf, Str
     })
 }
 
-/// iOS: no file dialogs; music goes into Sumo's folder in the Files app.
+/// iOS: no file dialogs; music goes into Utako's folder in the Files app.
 #[cfg(target_os = "ios")]
 mod system {
     use super::Pick;
     use std::path::PathBuf;
 
     pub fn pick(_title: &str, _pick: Pick) -> anyhow::Result<Option<PathBuf>> {
-        anyhow::bail!("put files in Sumo's folder in the Files app")
+        anyhow::bail!("put files in Utako's folder in the Files app")
     }
 }
 

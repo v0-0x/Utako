@@ -424,14 +424,14 @@ pub struct Feed {
     pub quit: bool,
     /// Settings were imported: the UI takes these over and the app restarts.
     pub imported_settings: Option<Box<Config>>,
-    /// Start Sumo again once it has closed (asked for after the player stopped working).
+    /// Start Utako again once it has closed (asked for after the player stopped working).
     pub restart: bool,
     /// The settings file last exported.
     pub exported_settings: Option<PathBuf>,
     pub update: UpdateState,
 }
 
-/// New versions of Sumo.
+/// New versions of Utako.
 #[derive(Debug, Clone, Default)]
 pub struct UpdateState {
     /// A newer release than this one.
@@ -454,9 +454,9 @@ pub enum UpdateStatus {
         attempt: u32,
         wrong: bool,
     },
-    /// The new version is being installed; Sumo quits and starts again.
+    /// The new version is being installed; Utako quits and starts again.
     Installing,
-    /// Installed, but Sumo couldn't start itself again.
+    /// Installed, but Utako couldn't start itself again.
     Installed,
     Failed(String),
 }
@@ -1866,7 +1866,7 @@ impl Service {
                 let current = env!("CARGO_PKG_VERSION");
                 match result {
                     Ok(release) if crate::updater::is_newer(&release.version, current) => {
-                        tracing::info!("Sumo {} is available", release.version);
+                        tracing::info!("Utako {} is available", release.version);
                         feed.update.available = Some(release);
                         feed.update.status = UpdateStatus::Idle;
                     }

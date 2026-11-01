@@ -126,14 +126,24 @@ pub fn bold_font(size: f32) -> FontId {
     FontId::new(size, bold())
 }
 
-/// Uploads the bundled logo once at startup.
+/// Uploads the bundled logo once at startup (128 px: sharp at 32 points on 3x screens too).
 pub fn load_logo(ctx: &egui::Context) -> egui::TextureHandle {
-    let img = image::load_from_memory(include_bytes!("../../assets/icon-64.png"))
-        .expect("bundled logo is a valid PNG")
+    load_png(ctx, "multimusic-logo", include_bytes!("../../assets/icon-128.png"))
+}
+
+/// The name in the logo's typeface (Fredoka SemiBold, drawn as paths in assets/wordmark.svg),
+/// white so it can be tinted with the text colour.
+pub fn load_wordmark(ctx: &egui::Context) -> egui::TextureHandle {
+    load_png(ctx, "wordmark", include_bytes!("../../assets/wordmark.png"))
+}
+
+fn load_png(ctx: &egui::Context, name: &str, png: &[u8]) -> egui::TextureHandle {
+    let img = image::load_from_memory(png)
+        .expect("bundled image is a valid PNG")
         .to_rgba8();
     let size = [img.width() as usize, img.height() as usize];
     let color = egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw());
-    ctx.load_texture("multimusic-logo", color, egui::TextureOptions::LINEAR)
+    ctx.load_texture(name, color, egui::TextureOptions::LINEAR)
 }
 
 /// The logo at `size` points, as a widget.
@@ -325,7 +335,7 @@ const CJK_FONTS: &[&str] = &[
 
 fn font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    // Fonts that come with Sumo: next to the program (Windows) or in the app's
+    // Fonts that come with Utako: next to the program (Windows) or in the app's
     // Resources (macOS).
     if let Some(dir) = crate::tools::exe_dir() {
         dirs.push(dir.join("fonts"));

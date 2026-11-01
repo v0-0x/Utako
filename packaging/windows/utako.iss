@@ -1,5 +1,5 @@
 ; Inno Setup script for the Windows installer.
-; Built by .github/workflows/release.yml:  ISCC /DAppVersion=0.2.0 /DStage=<folder> sumo.iss
+; Built by .github/workflows/release.yml:  ISCC /DAppVersion=0.2.0 /DStage=<folder> utako.iss
 ; <Stage> holds multimusic.exe, tools\ (mpv, yt-dlp, ffmpeg, ffprobe), fonts\ and the license.
 
 #ifndef AppVersion
@@ -11,9 +11,9 @@
 
 [Setup]
 AppId={{6B0E8D4A-1F57-4C6B-9E1B-2D7A5C1F3E90}
-AppName=Sumo
+AppName=Utako
 AppVersion={#AppVersion}
-AppVerName=Sumo {#AppVersion}
+AppVerName=Utako {#AppVersion}
 AppPublisher=v0-0x
 AppPublisherURL=https://github.com/v0-0x/sumo-music
 AppSupportURL=https://github.com/v0-0x/sumo-music/issues
@@ -21,23 +21,23 @@ AppUpdatesURL=https://github.com/v0-0x/sumo-music/releases
 ; Installed for the current user: no administrator prompt, and updates install silently.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-DefaultDirName={autopf}\Sumo
-DefaultGroupName=Sumo
+DefaultDirName={autopf}\Utako
+DefaultGroupName=Utako
 DisableProgramGroupPage=yes
 DisableDirPage=auto
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-OutputBaseFilename=Sumo-Setup-{#AppVersion}-x64
+OutputBaseFilename=Utako-Setup-{#AppVersion}-x64
 OutputDir=..\..\dist
-SetupIconFile=..\..\assets\sumo.ico
+SetupIconFile=..\..\assets\utako.ico
 UninstallDisplayIcon={app}\multimusic.exe
-UninstallDisplayName=Sumo
+UninstallDisplayName=Utako
 LicenseFile={#Stage}\LICENSE.txt
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-; A running Sumo is closed for the update (it starts again afterwards).
+; A running Utako is closed for the update (it starts again afterwards).
 CloseApplications=force
 RestartApplications=no
 
@@ -50,9 +50,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [InstallDelete]
 ; Tools from older versions are replaced as a whole.
 Type: filesandordirs; Name: "{app}\tools"
-; Shortcuts from before the app was renamed (MultiMusic became Sumo).
+; Shortcuts from before the app was renamed (MultiMusic became Sumo, Sumo became Utako).
 Type: files; Name: "{autoprograms}\MultiMusic.lnk"
 Type: files; Name: "{autodesktop}\MultiMusic.lnk"
+Type: files; Name: "{autoprograms}\Sumo.lnk"
+Type: files; Name: "{autodesktop}\Sumo.lnk"
 
 [Files]
 Source: "{#Stage}\multimusic.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -62,12 +64,12 @@ Source: "{#Stage}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\THIRD-PARTY.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Sumo"; Filename: "{app}\multimusic.exe"
-Name: "{autodesktop}\Sumo"; Filename: "{app}\multimusic.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Utako"; Filename: "{app}\multimusic.exe"
+Name: "{autodesktop}\Utako"; Filename: "{app}\multimusic.exe"; Tasks: desktopicon
 
 [Run]
 ; Offered after a normal install; run right away after a silent update.
-Filename: "{app}\multimusic.exe"; Description: "{cm:LaunchProgram,Sumo}"; Flags: nowait postinstall
+Filename: "{app}\multimusic.exe"; Description: "{cm:LaunchProgram,Utako}"; Flags: nowait postinstall
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\tools"

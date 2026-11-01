@@ -1401,7 +1401,7 @@ mod tests {
     #[test]
     fn user_parsing() {
         let v = json!({
-            "display_name": "Sumo User",
+            "display_name": "Utako User",
             "external_urls": {"spotify": "https://open.spotify.com/user/multimusic"},
             "id": "multimusic",
             "images": [
@@ -1415,7 +1415,7 @@ mod tests {
             parse_user(&v),
             Some(SpotifyUser {
                 id: "multimusic".into(),
-                display_name: "Sumo User".into(),
+                display_name: "Utako User".into(),
                 image: Some("https://i.scdn.co/image/big".into()),
             })
         );

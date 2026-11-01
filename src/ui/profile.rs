@@ -691,7 +691,10 @@ fn item_menu(ui: &mut Ui, cx: &mut Cx, item: &TopItem, song: bool) {
             ui.close();
         }
     }
-    if ui.button(theme::ic(icon::MAGNIFYING_GLASS, "Search in Sumo")).clicked() {
+    if ui
+        .button(theme::ic(icon::MAGNIFYING_GLASS, "Search in Utako"))
+        .clicked()
+    {
         cx.actions.push(if item.artist.is_empty() {
             Action::Search(item.name.clone())
         } else {

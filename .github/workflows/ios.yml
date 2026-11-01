@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           bundle() { # target platform out
-            app="$3/Sumo.app"
+            app="$3/Utako.app"
             mkdir -p "$app/fonts"
             cp "target/$1/release/multimusic" "$app/"
             sed -e "s/@VERSION@/$VERSION/g" -e "s/@PLATFORM@/$2/g" packaging/ios/Info.plist > "$app/Info.plist"
@@ -88,8 +88,8 @@ jobs:
           bundle aarch64-apple-ios-sim iPhoneSimulator sim
           bundle aarch64-apple-ios iPhoneOS device
           mkdir -p dist Payload
-          cp -R device/Sumo.app Payload/
-          zip -qry "dist/Sumo-$VERSION-ios.ipa" Payload
+          cp -R device/Utako.app Payload/
+          zip -qry "dist/Utako-$VERSION-ios.ipa" Payload
           ls -l dist
 
       - name: Start it in the simulator
@@ -102,12 +102,12 @@ jobs:
           xcrun simctl boot "$udid"
           # Waits for the first boot to finish setting up (a few minutes on a fresh runner).
           xcrun simctl bootstatus "$udid"
-          xcrun simctl install "$udid" sim/Sumo.app
-          # A test song in Sumo's Documents folder (where the Files app puts music): 40 s of
+          xcrun simctl install "$udid" sim/Utako.app
+          # A test song in Utako's Documents folder (where the Files app puts music): 40 s of
           # speech as AAC in .m4a, the format of most songs bought or ripped on Apple devices.
           data=$(xcrun simctl get_app_container "$udid" "$BUNDLE_ID" data)
           mkdir -p "$data/Documents"
-          say -o dl/test.aiff "Sumo is playing this from its own folder on the iPhone. $(printf 'One two three four five. %.0s' 1 2 3 4 5 6)"
+          say -o dl/test.aiff "Utako is playing this from its own folder on the iPhone. $(printf 'One two three four five. %.0s' 1 2 3 4 5 6)"
           afconvert -f m4af -d aac dl/test.aiff "$data/Documents/Test song.m4a"
           SIMCTL_CHILD_SUMO_PLAY="$data/Documents/Test song.m4a" xcrun simctl launch "$udid" "$BUNDLE_ID"
           mkdir -p shots
@@ -120,11 +120,11 @@ jobs:
           cat shots/multimusic.log 2>/dev/null || true
           # Still running after 25 s: it started and didn't crash.
           if ! xcrun simctl spawn "$udid" launchctl list | grep -q "$BUNDLE_ID"; then
-            echo "::error::Sumo isn't running in the simulator"
+            echo "::error::Utako isn't running in the simulator"
             ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | tail -5 || true
             exit 1
           fi
-          echo "Sumo is running in the simulator"
+          echo "Utako is running in the simulator"
           if ! grep -q "player: playing Test song.m4a" shots/multimusic.log; then
             echo "::error::the built-in player didn't play the test song"
             exit 1

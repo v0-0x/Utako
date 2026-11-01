@@ -4,12 +4,12 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 pub const USER_AGENT: &str = concat!(
-    "Sumo/",
+    "Utako/",
     env!("CARGO_PKG_VERSION"),
     " (https://github.com/v0-0x/sumo-music)"
 );
 
-/// Most an image may be (covers, avatars): a bigger answer is no image Sumo wants.
+/// Most an image may be (covers, avatars): a bigger answer is no image Utako wants.
 pub const MAX_IMAGE: usize = 16 << 20;
 
 /// The body of `resp`, giving up once it passes `max` bytes (counted after decompression, so

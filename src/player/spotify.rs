@@ -396,7 +396,7 @@ fn new_deck(
     Ok(SpotifyDeck { id, player, mixer })
 }
 
-/// The player events Sumo acts on.
+/// The player events Utako acts on.
 fn map_event(ev: PlayerEvent) -> Option<SpotifyEvent> {
     Some(match ev {
         PlayerEvent::Loading { .. } => SpotifyEvent::Loading,

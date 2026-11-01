@@ -99,7 +99,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 if cfg!(target_os = "ios") {
                     hint(
                         ui,
-                        "Copy music into Sumo's folder in the Files app (On My iPhone › Sumo), from a computer \
+                        "Copy music into Utako's folder in the Files app (On My iPhone › Utako), from a computer \
                          with Finder or iTunes, or from iCloud Drive, then Rescan now.",
                     );
                 }
@@ -194,7 +194,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                         ui,
                         "Automatic uses PipeWire/PulseAudio when it's running (it follows your system's output \
                          device). A change takes effect the next time Spotify playback starts (or after restarting \
-                         Sumo).",
+                         Utako).",
                     );
                 }
                 ui.collapsing("Advanced", |ui| {
@@ -202,7 +202,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     ui.label(RichText::new("Your own Spotify app (recommended for search)").strong());
                     hint(
                         ui,
-                        "Your playlists import through Sumo's direct Spotify connection. Search and artist / album \
+                        "Your playlists import through Utako's direct Spotify connection. Search and artist / album \
                          pages use Spotify's Web API, whose shared key is often rate limited (HTTP 429). Fix it with a free \
                          app: developer.spotify.com → Dashboard → Create app → tick \"Web API\". Then copy its Client ID \
                          and Client secret (app → Settings → View client secret) here.",
@@ -218,7 +218,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     );
                     hint(
                         ui,
-                        "With the secret, Sumo uses your app straight away: no browser login and no Redirect URI. \
+                        "With the secret, Utako uses your app straight away: no browser login and no Redirect URI. \
                          Likes still sync through your normal Spotify login.",
                     );
                     status(ui, &cx.feed.spotify_web_api);
@@ -381,7 +381,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 }
                 hint(
                     ui,
-                    "Spotify and Apple Music audio is DRM-protected, so Sumo downloads the same recording \
+                    "Spotify and Apple Music audio is DRM-protected, so Utako downloads the same recording \
                      from YouTube (with yt-dlp) or SoundCloud, then tags it with the \
                      song's details from Spotify: album, artists, track and disc number, release date, ISRC, \
                      label, copyright and full-size cover.",
@@ -394,7 +394,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
             section(ui, icon::APPLE_LOGO, source_color(Source::AppleMusic), "Apple Music", |ui| {
                 hint(
                     ui,
-                    "Apple Music streams are DRM-protected and can't play on Linux. Sumo imports your library and \
+                    "Apple Music streams are DRM-protected and can't play on Linux. Utako imports your library and \
                      playlists, then plays each song from your local files, Spotify or SoundCloud.",
                 );
                 ui.add_space(6.0);
@@ -469,7 +469,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 ui.checkbox(&mut cfg.discord.song_as_activity_name, "Show the song title as \"Listening to …\"");
                 hint(
                     ui,
-                    "Create a free app at discord.com/developers/applications (name it e.g. \"Sumo\") and paste its \
+                    "Create a free app at discord.com/developers/applications (name it e.g. \"Utako\") and paste its \
                      Application ID. Works with the Discord desktop app, Vesktop and arRPC.",
                 );
             });
@@ -562,7 +562,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 hint(
                     ui,
                     if cfg!(target_os = "ios") {
-                        "Local files and SoundCloud play in Sumo's own player; Spotify plays through librespot \
+                        "Local files and SoundCloud play in Utako's own player; Spotify plays through librespot \
                          (max 320 kbps Ogg Vorbis). iOS chooses the output: speaker, headphones, Bluetooth or AirPlay."
                     } else {
                         "Local files and SoundCloud play through mpv; Spotify plays through librespot (max 320 kbps Ogg Vorbis)."
@@ -613,7 +613,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
             // ---------------------------------------------------------- updates
             section(ui, icon::ARROW_CIRCLE_UP, TEXT, "Updates", |ui| {
                 use crate::service::UpdateStatus;
-                ui.label(format!("You have Sumo {}", env!("CARGO_PKG_VERSION")));
+                ui.label(format!("You have Utako {}", env!("CARGO_PKG_VERSION")));
                 ui.checkbox(&mut cfg.updates.check, "Check for updates automatically");
                 ui.checkbox(&mut cfg.updates.beta, "Beta updates");
                 hint(
@@ -651,7 +651,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                             ui.label("Installing…");
                         }
                         (UpdateStatus::Installed, _) => {
-                            ui.label("Installed. Start Sumo again to use the new version.");
+                            ui.label("Installed. Start Utako again to use the new version.");
                         }
                         (UpdateStatus::Failed(why), _) => {
                             ui.label(RichText::new(why).color(DANGER));
@@ -675,7 +675,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                     hint(
                         ui,
                         "Update now downloads the new version's package, checks it, asks for your password and \
-                         installs it with pacman. Sumo then starts again.",
+                         installs it with pacman. Utako then starts again.",
                     );
                 }
             });
@@ -751,7 +751,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                             ui.ctx(),
                             "settings-file",
                             "Settings file to import",
-                            Pick::File("Sumo settings", &["json"]),
+                            Pick::File("Utako settings", &["json"]),
                         );
                     }
                     match picker::take(ui.ctx(), "settings-file") {
@@ -770,7 +770,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 hint(
                     ui,
                     "Importing replaces your settings (folders and programs that aren't on this computer stay as they \
-                     are), adds the playlists, and restarts Sumo.",
+                     are), adds the playlists, and restarts Utako.",
                 );
             });
 
@@ -779,7 +779,7 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                 ui.horizontal(|ui| {
                     theme::logo(ui, cx.logo, 40.0);
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("Sumo").font(theme::bold_font(18.0)));
+                        ui.label(RichText::new("Utako").font(theme::bold_font(18.0)));
                         ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(pal().text_dim));
                     });
                 });

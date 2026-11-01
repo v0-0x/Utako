@@ -36,10 +36,10 @@ const fn theme(id: &'static str, name: &'static str, accent: u32, p: [u32; 7]) -
     }
 }
 
-/// Sumo's own graphite, the record label's off-white as the accent.
+/// Utako's own graphite, the record label's off-white as the accent.
 pub const SUMO: ColorTheme = theme(
     "sumo",
-    "Sumo",
+    "Utako",
     0xe9e6df,
     [0x0e0e10, 0x161619, 0x1e1e22, 0x27272c, 0x303036, 0xa4a3a9, 0x6c6b72],
 );
@@ -94,7 +94,7 @@ pub const THEMES: [ColorTheme; 8] = [
 
 /// Accent swatches offered next to the color picker.
 pub const ACCENTS: [(&str, u32); 9] = [
-    ("Off-white (Sumo)", 0xe9e6df),
+    ("Off-white (Utako)", 0xe9e6df),
     ("Violet", 0x7c6cf2),
     ("Blue", 0x5b8cff),
     ("Teal", 0x22c3a6),
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(holiday("auto", 12, 25).map(|h| h.id), Some("christmas"));
         assert_eq!(holiday("off", 12, 25).map(|h| h.id), None);
         assert_eq!(holiday("blossom", 6, 1).map(|h| h.id), Some("blossom"));
-        // Unknown themes fall back to Sumo's own.
+        // Unknown themes fall back to Utako's own.
         assert_eq!(color_theme("nope").id, "sumo");
     }
 

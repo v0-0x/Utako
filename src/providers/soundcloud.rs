@@ -521,7 +521,7 @@ impl SoundCloud {
         // things when it is played.
         let mut ext = sniff_file_ext(&part).await;
         if ext.is_none() && kind == DownloadKind::Original {
-            warn!("SoundCloud: original file of \"{title}\" isn't audio Sumo knows; saving the stream");
+            warn!("SoundCloud: original file of \"{title}\" isn't audio Utako knows; saving the stream");
             let _ = tokio::fs::remove_file(&part).await;
             kind = DownloadKind::Stream;
             if let Err(e) = self.download_stream(&json, &title, &part, progress).await {
@@ -1462,7 +1462,7 @@ fn api(path: &str) -> String {
     format!("{base}{path}")
 }
 
-/// Whether `url` is SoundCloud's (or the stand-in tests point Sumo at), so it may get the login.
+/// Whether `url` is SoundCloud's (or the stand-in tests point Utako at), so it may get the login.
 fn is_soundcloud_api(url: &Url) -> bool {
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     (url.scheme() == "https" && (host == "soundcloud.com" || host.ends_with(".soundcloud.com")))

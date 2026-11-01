@@ -51,7 +51,7 @@ mod os {
         /// window opens).
         pub fn new(commands: UnboundedSender<Command>, window: Option<isize>) -> Mpris {
             let config = PlatformConfig {
-                display_name: "Sumo",
+                display_name: "Utako",
                 dbus_name: "multimusic",
                 hwnd: window.map(|h| h as *mut std::ffi::c_void),
             };
@@ -336,7 +336,7 @@ mod os {
 
         #[zbus(property)]
         fn identity(&self) -> String {
-            "Sumo".into()
+            "Utako".into()
         }
 
         #[zbus(property)]

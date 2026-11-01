@@ -1,4 +1,4 @@
-//! Sumo: a lightweight native music player for local files, Spotify and SoundCloud.
+//! Utako: a lightweight native music player for local files, Spotify and SoundCloud.
 
 // No console window next to the app on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     memory::tune();
     // How Spotify's audio stream shows up in pavucontrol / the PipeWire graph. Set before
     // any other thread exists, as required for set_var.
-    std::env::set_var("PULSE_PROP_application.name", "Sumo");
+    std::env::set_var("PULSE_PROP_application.name", "Utako");
     std::env::set_var("PULSE_PROP_application.icon_name", "sumo");
     std::env::set_var("PULSE_PROP_stream.description", "Spotify");
     let paths = Paths::new();
@@ -49,21 +49,21 @@ fn main() -> anyhow::Result<()> {
             .init(),
         None => tracing_subscriber::fmt().with_env_filter(filter).init(),
     }
-    tracing::info!("Sumo {} starting", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Utako {} starting", env!("CARGO_PKG_VERSION"));
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         tracing::error!("panic: {info}");
         default_hook(info);
     }));
 
-    // Starting Sumo again brings the running one to the front.
+    // Starting Utako again brings the running one to the front.
     #[cfg(windows)]
     if instance::running_elsewhere() {
         return Ok(());
     }
     #[cfg(all(unix, not(target_os = "ios")))]
     if instance::running_elsewhere(&paths) {
-        tracing::info!("Sumo is already running: showing that one");
+        tracing::info!("Utako is already running: showing that one");
         return Ok(());
     }
 
@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
         .map_or([1280.0, 820.0], |[w, h]| [w.max(880.0), h.max(560.0)]);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Sumo")
+            .with_title("Utako")
             .with_app_id("multimusic")
             .with_inner_size(size)
             .with_min_inner_size([880.0, 560.0])
@@ -124,7 +124,7 @@ fn main() -> anyhow::Result<()> {
     let ui_cmd = cmd.clone();
     let ui_shared = shared.clone();
     let result = eframe::run_native(
-        "Sumo",
+        "Utako",
         options,
         Box::new(move |cc| Ok(Box::new(ui::App::new(cc, ui_shared, ui_cmd, cfg, paths, handle)))),
     );
@@ -161,7 +161,7 @@ fn log_file(paths: &Paths) -> Option<std::fs::File> {
     std::fs::File::create(paths.data_dir.join("multimusic.log")).ok()
 }
 
-/// One Sumo at a time on Windows: a second start asks the first to show itself.
+/// One Utako at a time on Windows: a second start asks the first to show itself.
 #[cfg(windows)]
 mod instance {
     use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -170,7 +170,7 @@ mod instance {
     use crate::service::Command;
 
     /// One name per user: pipe names are shared by everyone on the computer, and another
-    /// user's pipe must not count as this user's Sumo running.
+    /// user's pipe must not count as this user's Utako running.
     fn pipe() -> String {
         let user: String = std::env::var("USERNAME")
             .unwrap_or_default()
@@ -180,7 +180,7 @@ mod instance {
         format!(r"\\.\pipe\multimusic-running-{user}")
     }
 
-    /// True when another Sumo runs (it was asked to come to the front).
+    /// True when another Utako runs (it was asked to come to the front).
     pub fn running_elsewhere() -> bool {
         use std::io::Write;
         use std::os::windows::fs::OpenOptionsExt;
@@ -223,7 +223,7 @@ mod instance {
     }
 }
 
-/// One Sumo at a time on Linux and macOS too: a second start asks the first to show itself,
+/// One Utako at a time on Linux and macOS too: a second start asks the first to show itself,
 /// through a socket in the user's own runtime folder. (iOS keeps one copy of an app itself.)
 #[cfg(all(unix, not(target_os = "ios")))]
 mod instance {
@@ -242,7 +242,7 @@ mod instance {
             .join("sumo.sock")
     }
 
-    /// True when another Sumo runs (it was asked to come to the front).
+    /// True when another Utako runs (it was asked to come to the front).
     pub fn running_elsewhere(paths: &Paths) -> bool {
         use std::io::Write;
         match std::os::unix::net::UnixStream::connect(socket(paths)) {
@@ -257,7 +257,7 @@ mod instance {
     pub fn listen(rt: &tokio::runtime::Handle, paths: &Paths, commands: UnboundedSender<Command>) {
         let _guard = rt.enter();
         let path = socket(paths);
-        // Left behind by a Sumo that didn't close properly: nothing answered on it.
+        // Left behind by a Utako that didn't close properly: nothing answered on it.
         let _ = std::fs::remove_file(&path);
         let listener = match tokio::net::UnixListener::bind(&path) {
             Ok(l) => l,

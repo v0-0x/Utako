@@ -203,13 +203,15 @@ fn brand(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
         cx.actions.push(Action::ToggleLibrary);
     }
     if !collapsed {
-        ui.painter().text(
-            Pos2::new(logo.right() + 10.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            "Sumo",
-            theme::bold_font(18.0),
-            TEXT,
+        // The wordmark is 241 × 90 pixels: 20 points high.
+        let size = vec2(20.0 * 241.0 / 90.0, 20.0);
+        let at = Rect::from_min_size(
+            Pos2::new(logo.right() + 10.0, rect.center().y - size.y / 2.0 + 1.0),
+            size,
         );
+        egui::Image::from_texture(egui::load::SizedTexture::new(cx.wordmark, size))
+            .tint(TEXT)
+            .paint_at(ui, at);
     }
 }
 
@@ -417,7 +419,7 @@ fn playlist_row(ui: &mut Ui, cx: &mut Cx, p: &crate::model::Playlist, view: &Vie
                 cx.actions.push(Action::Delete(p.id.clone()));
                 ui.close();
             }
-        } else if ui.button(theme::ic(icon::TRASH, "Remove from Sumo")).clicked() {
+        } else if ui.button(theme::ic(icon::TRASH, "Remove from Utako")).clicked() {
             cx.actions.push(Action::Delete(p.id.clone()));
             ui.close();
         }
@@ -523,7 +525,7 @@ fn search_box(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, rect: Rect) {
 // ------------------------------------------------------------------ content toolbar
 
 /// Back / forward above the main view.
-/// A slim bar about a new version of Sumo, and its download and install.
+/// A slim bar about a new version of Utako, and its download and install.
 pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mut String) {
     use crate::service::UpdateStatus;
     let update = &cx.feed.update;
@@ -564,20 +566,20 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
                 );
                 match &update.status {
                     UpdateStatus::Downloading(done) => {
-                        ui.label(format!("Downloading Sumo {shown}…"));
+                        ui.label(format!("Downloading Utako {shown}…"));
                         ui.add(egui::ProgressBar::new(*done).desired_width(160.0).show_percentage());
                     }
                     UpdateStatus::NeedsPassword { .. } => {
                         ui.label(format!(
-                            "Sumo {shown} is downloaded. Enter your password to install it."
+                            "Utako {shown} is downloaded. Enter your password to install it."
                         ));
                     }
                     UpdateStatus::Installing => {
                         ui.spinner();
-                        ui.label(format!("Installing Sumo {shown}. It starts again in a moment."));
+                        ui.label(format!("Installing Utako {shown}. It starts again in a moment."));
                     }
                     UpdateStatus::Installed => {
-                        ui.label(format!("Sumo {shown} is installed. Start Sumo again to use it."));
+                        ui.label(format!("Utako {shown} is installed. Start Utako again to use it."));
                     }
                     UpdateStatus::Failed(why) => {
                         ui.label(egui::RichText::new(format!("The update didn't work: {why}")).color(DANGER));
@@ -589,7 +591,7 @@ pub fn update_bar(ui: &mut Ui, cx: &mut Cx, skipped: &mut String, dismissed: &mu
                         }
                     }
                     _ => {
-                        ui.label(egui::RichText::new(format!("Sumo {shown} is available")).strong());
+                        ui.label(egui::RichText::new(format!("Utako {shown} is available")).strong());
                         if crate::updater::can_install() {
                             if widgets::pill(ui, "Update now", cx.accent, theme::on_color(cx.accent)).clicked() {
                                 cx.actions.push(Action::Cmd(Command::InstallUpdate));
@@ -1052,7 +1054,7 @@ fn sleep_button(ui: &mut Ui, cx: &mut Cx, rect: Rect) {
     }
 }
 
-/// "Sumo's Halloween theme is on": `Some(true)` for Turn off, `Some(false)` for OK, `None`
+/// "Utako's Halloween theme is on": `Some(true)` for Turn off, `Some(false)` for OK, `None`
 /// while it's still showing.
 pub fn holiday_notice(ui: &mut Ui, cx: &mut Cx, h: &super::themes::Holiday) -> Option<bool> {
     let mut answer = None;
@@ -1072,7 +1074,7 @@ pub fn holiday_notice(ui: &mut Ui, cx: &mut Cx, h: &super::themes::Holiday) -> O
                 );
                 ui.add_space(24.0);
                 ui.label(format!(
-                    "Sumo's {} theme is on. Change it from Themes in the sidebar.",
+                    "Utako's {} theme is on. Change it from Themes in the sidebar.",
                     h.name
                 ));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

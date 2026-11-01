@@ -96,6 +96,8 @@ pub struct Cx<'a> {
     pub actions: &'a mut Vec<Action>,
     /// The app logo (same artwork as the window and launcher icon).
     pub logo: egui::TextureId,
+    /// The name "Utako" in the logo's typeface (white, tinted when drawn).
+    pub wordmark: egui::TextureId,
     /// The holiday theme on now, if any.
     pub holiday: Option<&'static themes::Holiday>,
     /// The color theme picked, the holiday setting and whether its animation runs.
@@ -176,6 +178,7 @@ pub struct App {
     paths: Paths,
     art: ArtCache,
     logo: egui::TextureHandle,
+    wordmark: egui::TextureHandle,
     view: View,
     history: Vec<View>,
     forward: Vec<View>,
@@ -237,6 +240,7 @@ impl App {
         ctx.set_zoom_factor(zoom);
         let art = ArtCache::new(rt.clone(), paths.art_cache(), cfg.ui.art_cache_size);
         let logo = theme::load_logo(&ctx);
+        let wordmark = theme::load_wordmark(&ctx);
         // Windows' media overlay and keys are tied to the window.
         #[cfg(windows)]
         {
@@ -256,6 +260,7 @@ impl App {
             paths,
             art,
             logo,
+            wordmark,
             view: View::Home,
             history: Vec::new(),
             forward: Vec::new(),
@@ -612,7 +617,7 @@ impl App {
     /// The colors come from the theme and the accent from the settings (a holiday theme
     /// brings its own and a tint); the background tint follows the current cover.
     fn update_colors(&mut self, ctx: &egui::Context, player: &PlayerView) {
-        // The date is looked at once a minute, so a holiday comes on while Sumo stays open.
+        // The date is looked at once a minute, so a holiday comes on while Utako stays open.
         if self.today_checked.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
             self.today = themes::today();
             self.today_checked = Some(Instant::now());
@@ -832,7 +837,7 @@ impl App {
                         .unwrap_or_default();
                     ui.label(format!(
                         "Your settings are replaced with the ones in “{name}”, its playlists are added, and \
-                         Sumo restarts."
+                         Utako restarts."
                     ));
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
@@ -856,11 +861,11 @@ impl App {
                         .as_ref()
                         .map(|r| r.version.clone())
                         .unwrap_or_default();
-                    ui.label(egui::RichText::new(format!("Install Sumo {version}")).font(theme::bold_font(18.0)));
+                    ui.label(egui::RichText::new(format!("Install Utako {version}")).font(theme::bold_font(18.0)));
                     ui.add_space(6.0);
                     ui.label(
                         "The new version is downloaded and checked. Enter your password to install it \
-                         (with sudo pacman); Sumo then starts again.",
+                         (with sudo pacman); Utako then starts again.",
                     );
                     ui.add_space(10.0);
                     let r = ui.add(
@@ -908,7 +913,7 @@ impl App {
                         ),
                         None => (
                             "Delete playlist?",
-                            format!("“{name}” will be removed from Sumo. Songs stay in your library."),
+                            format!("“{name}” will be removed from Utako. Songs stay in your library."),
                             "Delete",
                         ),
                     };
@@ -956,18 +961,18 @@ impl App {
     }
 
     /// The player runs in the background; if it stopped (a bug), nothing would respond anymore.
-    /// Say so and offer to start Sumo again instead of leaving dead buttons.
+    /// Say so and offer to start Utako again instead of leaving dead buttons.
     fn service_stopped(&mut self, ctx: &egui::Context) {
         if !self.cmd.is_closed() || self.restarting {
             return;
         }
         egui::Modal::new(egui::Id::new("service-stopped")).show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.label(egui::RichText::new("Sumo's player stopped").font(theme::bold_font(18.0)));
+            ui.label(egui::RichText::new("Utako's player stopped").font(theme::bold_font(18.0)));
             ui.add_space(8.0);
             ui.label("Something went wrong in the background, so playback and the buttons won't respond. Your library and playlists are safe.");
             ui.add_space(12.0);
-            if widgets::pill(ui, "Restart Sumo", self.accent, theme::on_color(self.accent)).clicked() {
+            if widgets::pill(ui, "Restart Utako", self.accent, theme::on_color(self.accent)).clicked() {
                 self.restarting = true;
                 self.shared.feed.write().unwrap().restart = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1133,6 +1138,7 @@ impl eframe::App for App {
                 tint: self.tint,
                 actions: &mut actions,
                 logo: self.logo.id(),
+                wordmark: self.wordmark.id(),
                 holiday: self.holiday,
                 theme: &theme_id,
                 holiday_setting: &holiday_setting,
@@ -1365,7 +1371,7 @@ impl eframe::App for App {
 /// The update password field (its state is dropped with the dialog).
 const PASSWORD_FIELD: &str = "update-password";
 
-/// What Sumo hands to the system to open: web pages and folders, never a program, a file or
+/// What Utako hands to the system to open: web pages and folders, never a program, a file or
 /// another kind of link (names and links can come from online services or imported files).
 fn can_open(target: &str) -> bool {
     let lower = target.trim().to_ascii_lowercase();

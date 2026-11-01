@@ -224,7 +224,7 @@ pub(super) fn onboarding(ui: &mut Ui, cx: &mut Cx) {
         ui.add_space(6.0);
         ui.label(
             egui::RichText::new(
-                "Sumo plays your local files, Spotify (Premium) and SoundCloud in one place, \
+                "Utako plays your local files, Spotify (Premium) and SoundCloud in one place, \
                  with synced lyrics, Discord status and Last.fm scrobbling.",
             )
             .color(pal().text_dim),

@@ -1,4 +1,4 @@
-Sumo ships these programs and fonts unchanged, so it works without installing anything
+Utako ships these programs and fonts unchanged, so it works without installing anything
 else. Each keeps its own license; their source code is available at the addresses below.
 
 mpv (local files and SoundCloud playback)
@@ -20,3 +20,7 @@ FFmpeg / ffprobe (saving and converting downloads)
 Inter (interface font)
   License: SIL Open Font License 1.1
   Source:  https://github.com/rsms/inter
+
+Fredoka (the letters of the logo and the name "Utako", drawn as shapes)
+  License: SIL Open Font License 1.1
+  Source:  https://github.com/google/fonts/tree/main/ofl/fredoka

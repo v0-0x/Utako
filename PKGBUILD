@@ -6,7 +6,7 @@ pkgname=multimusic
 # makepkg writes what pkgver() returns into this file, which then blocks `git pull`.
 pkgver=0.8.0
 pkgrel=1
-pkgdesc="Sumo: lightweight native music player for local files, Spotify and SoundCloud with synced lyrics, Discord Rich Presence and Last.fm scrobbling"
+pkgdesc="Utako: lightweight native music player for local files, Spotify and SoundCloud with synced lyrics, Discord Rich Presence and Last.fm scrobbling"
 arch=('x86_64' 'aarch64')
 url="https://github.com/v0-0x/sumo-music"
 license=('MIT')
@@ -19,8 +19,9 @@ optdepends=('pipewire-pulse: Spotify output on PipeWire desktops (usually alread
             'inter-font: nicer interface font'
             'discord: Rich Presence (also works with Vesktop / arRPC)'
             'yt-dlp: download Spotify and Apple Music songs (found on YouTube)')
-# The app is called Sumo; the package keeps its old name so installed copies update in place.
-provides=('multimusic' 'sumo')
+# The app is called Utako (Sumo until 0.9.0); the package keeps its first name so installed copies
+# update in place.
+provides=('multimusic' 'sumo' 'utako')
 conflicts=('medley')
 replaces=('medley')
 options=('!lto' '!debug')
@@ -64,14 +65,15 @@ check() {
 package() {
   cd "$(_root)"
   install -Dm755 target/release/multimusic "$pkgdir/usr/bin/multimusic"
+  ln -s multimusic "$pkgdir/usr/bin/utako"
   ln -s multimusic "$pkgdir/usr/bin/sumo"
   install -Dm644 packaging/multimusic.desktop "$pkgdir/usr/share/applications/multimusic.desktop"
-  # The icon is named "sumo" (not "multimusic"), so desktops that cached the old logo under the
-  # old name load the new one.
-  install -Dm644 assets/logo.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/sumo.svg"
+  # The icon is named after the app (it was "sumo"), so desktops that cached the old logo under
+  # the old name load the new one.
+  install -Dm644 assets/logo.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/utako.svg"
   local size
   for size in 16 24 32 48 64 128 256 512; do
-    install -Dm644 "assets/icon-$size.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/sumo.png"
+    install -Dm644 "assets/icon-$size.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/utako.png"
   done
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
