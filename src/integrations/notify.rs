@@ -42,7 +42,8 @@ pub fn song(title: &str, artist: &str, album: &str) {
                 &(
                     "Utako",
                     replaces,
-                    "sumo",
+                    // The icon the package installs (named after the app).
+                    "utako",
                     summary.as_str(),
                     body.as_str(),
                     Vec::<&str>::new(),

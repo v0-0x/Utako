@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
     // How Spotify's audio stream shows up in pavucontrol / the PipeWire graph. Set before
     // any other thread exists, as required for set_var.
     std::env::set_var("PULSE_PROP_application.name", "Utako");
-    std::env::set_var("PULSE_PROP_application.icon_name", "sumo");
+    std::env::set_var("PULSE_PROP_application.icon_name", "utako");
     std::env::set_var("PULSE_PROP_stream.description", "Spotify");
     let paths = Paths::new();
     let filter = EnvFilter::try_from_env("MULTIMUSIC_LOG")
@@ -284,7 +284,7 @@ fn ios_graphics() -> eframe::egui_wgpu::WgpuConfiguration {
     WgpuConfiguration {
         wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
             device_descriptor: Arc::new(|adapter: &wgpu::Adapter| wgpu::DeviceDescriptor {
-                label: Some("sumo"),
+                label: Some("utako"),
                 required_limits: adapter.limits(),
                 ..Default::default()
             }),
