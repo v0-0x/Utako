@@ -130,7 +130,7 @@ impl Sec {
                 "Downloads",
                 icon::DOWNLOAD_SIMPLE,
                 "Where downloads go, and how Spotify and Apple Music songs are saved",
-                "yt-dlp ytdlp youtube zotify spotify mp3 opus ogg vorbis folder lyrics embed tags download media server",
+                "yt-dlp ytdlp youtube spotify mp3 opus ogg vorbis folder lyrics embed tags download media server",
             ),
             Sec::Appearance => (
                 "Appearance",
@@ -1641,22 +1641,20 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             );
         }
     });
-    if !cfg!(target_os = "ios") {
-        spotify_downloads(ui, pg, cx, cfg);
-    }
+    spotify_downloads(ui, pg, cfg);
     let (title, help) = if cfg!(target_os = "ios") {
         (
-            "Spotify and Apple Music songs",
+            "Apple Music songs",
             "Their audio is DRM-protected, so Utako downloads the same recording from SoundCloud, then tags \
-             it with the song's details from Spotify: album, artists, track and disc number, release date, \
-             ISRC, label, copyright and full-size cover.",
+             it with the song's details from Spotify when it has the song. Spotify songs are found this way \
+             too while you aren't logged in to Spotify.",
         )
     } else {
         (
             "Apple Music songs",
             "Their audio is DRM-protected, so Utako downloads the same recording from YouTube (with yt-dlp) \
              or SoundCloud, then tags it with the song's details from Spotify when it has the song. Spotify \
-             songs are found this way too while zotify isn't installed.",
+             songs are found this way too while you aren't logged in to Spotify.",
         )
     };
     group(ui, pg, Head::Title(title, help), |ui, pg| {
@@ -1715,64 +1713,28 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
     });
 }
 
-/// Spotify songs, saved straight from Spotify by zotify.
-fn spotify_downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
+/// Spotify songs, saved straight from Spotify.
+fn spotify_downloads(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
     group(
         ui,
         pg,
         Head::Title(
             "Spotify songs",
-            "Saved straight from Spotify by zotify (github.com/zotify-dev/zotify), with your Spotify login \
-             here: Spotify's own Ogg Vorbis, 320 kbps with Premium. Then tagged with the song's details from \
-             Spotify: album, artists, track and disc number, release date, ISRC, label, copyright and \
-             full-size cover. Apple Music songs Utako has matched to Spotify are saved this way too.",
+            "Saved straight from Spotify through your Spotify login here: the same Ogg Vorbis file Utako \
+             plays, 320 kbps with Premium. Then tagged with the song's details from Spotify: album, artists, \
+             track and disc number, release date, ISRC, label, copyright and full-size cover. Apple Music \
+             songs Utako has matched to Spotify are saved this way too.",
         ),
         |ui, pg| {
-            let state = widgets::zotify_status(ui, cx, &cfg.downloads.zotify_path);
-            let (text, color) = match &state {
-                Some(Ok(())) if !cx.feed.spotify_logged_in => (
-                    "zotify is ready: log in to Spotify (Settings › Spotify) for it to use".to_string(),
-                    pal().text_dim,
-                ),
-                Some(Ok(())) => ("zotify is ready".to_string(), GREEN),
-                Some(Err(why)) => (format!("zotify {why}. {}", crate::zotify::install_hint()), DANGER),
-                None => ("Checking zotify…".to_string(), pal().text_faint),
-            };
-            row_with(
-                ui,
-                pg,
-                "zotify program",
-                Some((&text, color)),
-                "",
-                "zotify pipx",
-                |ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut cfg.downloads.zotify_path)
-                            .hint_text("zotify")
-                            .desired_width(FIELD_W - 60.0),
-                    );
-                    if matches!(state, Some(Err(_))) && ui.small_button("Check again").clicked() {
-                        let program = cfg.downloads.zotify_path.trim().to_string();
-                        cx.actions.push(Action::Cmd(Command::CheckZotify(program)));
-                    }
-                },
-            );
-            field(
-                ui,
-                pg,
-                "Extra zotify options",
-                "--download-real-time=True downloads a song only as fast as it plays, which zotify suggests \
-                 to keep your Spotify account out of trouble. --download-quality=high asks for 160 kbps.",
-                &mut cfg.downloads.zotify_args,
-                "--download-real-time=True",
-                false,
-            );
+            if cfg!(target_os = "ios") {
+                return;
+            }
             toggle(
                 ui,
                 pg,
                 "Save Spotify downloads as MP3 instead of Ogg Vorbis",
-                "Ogg Vorbis is Spotify's own audio, saved as it is. MP3 is converted from it (320 kbps with \
-                 Premium): it can't add quality, but plays on every device and player.",
+                "Ogg Vorbis is Spotify's own audio, saved as it is. MP3 is converted from it: it can't add \
+                 quality, but plays on every device and player.",
                 &mut cfg.downloads.spotify_mp3,
             );
         },

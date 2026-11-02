@@ -33,6 +33,8 @@ impl Service {
     }
 
     pub(super) fn download(&mut self, tracks: Vec<Track>) {
+        // Asked again: Spotify songs wait for a Spotify connection again.
+        self.spotify_failed_for_downloads = false;
         let mut already = 0;
         let mut added: Vec<String> = Vec::new();
         {
@@ -73,9 +75,24 @@ impl Service {
     pub(super) fn pump_downloads(&mut self) {
         const PARALLEL: usize = 2;
         while self.download_jobs.len() < PARALLEL {
+            // Spotify songs come through Utako's Spotify connection: while it's on its way they
+            // wait, and the others go ahead.
+            let spotify_queued = self
+                .shared
+                .feed
+                .read()
+                .unwrap()
+                .downloads
+                .iter()
+                .any(|d| d.state == DownloadState::Queued && d.track.source == Source::Spotify);
+            let hold_spotify = spotify_queued && self.spotify_downloads_wait();
             let track = {
                 let mut feed = self.shared.feed.write().unwrap();
-                let Some(item) = feed.downloads.iter_mut().find(|d| d.state == DownloadState::Queued) else {
+                let next = feed
+                    .downloads
+                    .iter_mut()
+                    .find(|d| d.state == DownloadState::Queued && !(hold_spotify && d.track.source == Source::Spotify));
+                let Some(item) = next else {
                     break;
                 };
                 item.state = DownloadState::Running(0.0);
@@ -94,12 +111,8 @@ impl Service {
                 client: self.hub.clone(),
                 server,
             });
+            let spotify_logged_in = self.cfg.spotify.enabled && self.spotify_auth.has_user_login();
             let d = &self.cfg.downloads;
-            // zotify borrows Utako's Spotify login; iOS can't run it.
-            let zotify = (!cfg!(target_os = "ios") && self.cfg.spotify.enabled && self.spotify_auth.has_user_login())
-                .then(|| {
-                    Zotify::new(&d.zotify_path, &d.zotify_args, &self.paths.spotify_dir()).with_mp3(d.spotify_mp3)
-                });
             let downloader = Downloader {
                 soundcloud: self.soundcloud.clone(),
                 http: self.http.clone(),
@@ -110,7 +123,9 @@ impl Service {
                 // A YouTube video is saved with yt-dlp whatever the setting.
                 ytdlp: ((d.youtube || track.source == Source::YouTube) && !cfg!(target_os = "ios"))
                     .then(|| YtDlp::new(&d.ytdlp_path, &d.ytdlp_args).with_mp3(d.youtube_mp3)),
-                zotify,
+                spotify_logged_in,
+                // iOS has no ffmpeg.
+                spotify_mp3: d.spotify_mp3 && !cfg!(target_os = "ios"),
                 to_server,
             };
             // A song for the media server is only made here, in the cache.
@@ -283,6 +298,16 @@ impl Service {
         self.pump_downloads();
     }
 
+    /// Whether Spotify songs should wait for Utako's Spotify connection: logged in, and it is
+    /// on its way (asked for here when it isn't there). After a failed try they don't wait;
+    /// they fail with the reason instead.
+    fn spotify_downloads_wait(&mut self) -> bool {
+        if !(self.cfg.spotify.enabled && self.spotify_auth.has_user_login()) || self.spotify_failed_for_downloads {
+            return false;
+        }
+        self.spotify_session().is_none()
+    }
+
     /// Where songs for the media server are made before they're sent.
     fn server_download_dir(&self) -> PathBuf {
         self.paths.cache_dir.join("downloads")
@@ -296,6 +321,8 @@ impl Service {
             .chain([self.server_download_dir()])
             .collect();
         dirs.dedup();
+        // The copy of the Spotify login that 0.9.4 lent zotify.
+        let _ = std::fs::remove_file(self.paths.spotify_dir().join("zotify-credentials.json"));
         tokio::task::spawn_blocking(move || {
             for dir in dirs {
                 let Ok(entries) = std::fs::read_dir(&dir) else { continue };

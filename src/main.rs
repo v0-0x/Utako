@@ -21,7 +21,6 @@ mod service;
 mod tools;
 mod ui;
 mod updater;
-mod zotify;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -1,9 +1,10 @@
 //! Saving songs as files. SoundCloud songs are downloaded directly. Spotify songs (and Apple
-//! Music songs matched to Spotify) are saved straight from Spotify by zotify. Apple Music audio
-//! is DRM-protected, so for the others the same recording is found on YouTube (with yt-dlp) or
-//! SoundCloud and downloaded from there; Spotify songs too while zotify isn't installed. Every
-//! file is then tagged with the song's details (from Spotify when it is a Spotify song), its
-//! cover and its lyrics, and kept in the download folder or sent to the media server.
+//! Music songs matched to Spotify) are saved straight from Spotify through Utako's Spotify
+//! connection. Apple Music audio is DRM-protected, so for the others the same recording is found
+//! on YouTube (with yt-dlp) or SoundCloud and downloaded from there; Spotify songs too while
+//! Utako isn't logged in to Spotify. Every file is then tagged with the song's details (from
+//! Spotify when it is a Spotify song), its cover and its lyrics, and kept in the download folder
+//! or sent to the media server.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -19,9 +20,8 @@ use crate::integrations::lyrics::{self, LyricsFetcher};
 use crate::library::tags::{self, Metadata};
 use crate::model::{Source, Track};
 use crate::providers::soundcloud::{self, DownloadKind, SoundCloud};
-use crate::providers::spotify_internal;
 use crate::providers::youtube::{self, YtDlp};
-use crate::zotify::{self, Zotify};
+use crate::providers::{spotify_audio, spotify_internal};
 
 pub type Progress<'a> = &'a (dyn Fn(f32) + Send + Sync);
 
@@ -33,15 +33,16 @@ pub struct Downloader {
     pub http: reqwest::Client,
     /// Lyrics to embed; `None` leaves them out.
     pub lyrics: Option<Arc<LyricsFetcher>>,
-    /// For the full details of Spotify songs.
+    /// For Spotify songs: their audio and all their details. `None`: not logged in to Spotify.
     pub spotify: Option<Session>,
     /// The same song on Spotify, for an Apple Music song's details.
     pub spotify_twin: Option<Track>,
     /// `None`: don't look on YouTube.
     pub ytdlp: Option<YtDlp>,
-    /// Saves Spotify songs straight from Spotify. `None`: not logged in to Spotify, or a system
-    /// that can't run it (iOS).
-    pub zotify: Option<Zotify>,
+    /// Logged in to Spotify (`spotify` is `None` only when it couldn't connect).
+    pub spotify_logged_in: bool,
+    /// Convert Spotify's Ogg Vorbis to MP3 (with ffmpeg).
+    pub spotify_mp3: bool,
     /// Send the song to the media server instead of keeping it on this device.
     pub to_server: Option<ToServer>,
 }
@@ -190,23 +191,21 @@ impl Downloader {
         }
     }
 
-    /// Spotify's own audio, through zotify. Without zotify (not installed, not logged in to
-    /// Spotify, or iOS), and for an Apple Music song it couldn't save, the same recording is
-    /// found on YouTube or SoundCloud instead.
+    /// Spotify's own audio, through Utako's Spotify connection. Without one (not logged in to
+    /// Spotify), and for an Apple Music song Spotify couldn't give, the same recording is found
+    /// on YouTube or SoundCloud instead.
     async fn spotify_or_found(&self, track: &Track, dir: &Path, progress: Progress<'_>) -> Result<(PathBuf, String)> {
         let id = self.on_spotify(track).and_then(|t| t.id.strip_prefix("spotify:track:"));
-        if let (Some(zotify), Some(id)) = (&self.zotify, id) {
-            match zotify.download(id, dir, progress).await {
+        if let (Some(session), Some(id)) = (&self.spotify, id) {
+            match spotify_audio::download(session, id, dir, progress).await {
+                Ok(path) if self.spotify_mp3 => return Ok((to_mp3(&path).await, "Spotify".into())),
                 Ok(path) => return Ok((path, "Spotify".into())),
-                Err(e) if e.is::<zotify::NotInstalled>() => {
-                    info!(
-                        "zotify isn't installed: looking for {} on YouTube and SoundCloud",
-                        track.id
-                    );
-                }
-                Err(e) if track.source == Source::AppleMusic => warn!("zotify for {}: {e:#}", track.id),
+                Err(e) if track.source == Source::AppleMusic => warn!("Spotify audio of {}: {e:#}", track.id),
                 Err(e) => return Err(e),
             }
+        }
+        if track.source == Source::Spotify && self.spotify_logged_in {
+            bail!("Utako couldn't connect to Spotify (see Settings › Spotify); try again");
         }
         self.find_and_download(track, dir, progress).await
     }
@@ -356,6 +355,35 @@ async fn fetch_image(http: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
     crate::http::get_image(http, url).await.ok()
 }
 
+/// Spotify's Ogg Vorbis as MP3 (VBR, ~245 kbps): converting can't add quality, but MP3 plays on
+/// every device. The Ogg file stays when ffmpeg can't do it.
+async fn to_mp3(ogg: &Path) -> PathBuf {
+    let mp3 = ogg.with_extension("mp3");
+    let status = crate::tools::command(crate::tools::resolve("ffmpeg", "ffmpeg"))
+        .args(["-v", "error", "-y", "-i"])
+        .arg(ogg)
+        .args(["-map", "0:a", "-c:a", "libmp3lame", "-q:a", "0"])
+        .arg(&mp3)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await;
+    match status {
+        Ok(s) if s.success() => {
+            let _ = tokio::fs::remove_file(ogg).await;
+            mp3
+        }
+        _ => {
+            let _ = tokio::fs::remove_file(&mp3).await;
+            warn!(
+                "ffmpeg couldn't convert {} to MP3; keeping the Ogg Vorbis file",
+                ogg.display()
+            );
+            ogg.to_path_buf()
+        }
+    }
+}
+
 /// Fragmented MP4 (SoundCloud's AAC streams) can't take tags; ffmpeg rewrites it as a regular
 /// MP4 without re-encoding. Returns whether the file can be tagged.
 async fn make_taggable(path: &Path) -> bool {
@@ -485,7 +513,7 @@ mod tests {
             ..Metadata::default()
         };
         assert_eq!(
-            server_place(Source::Spotify, Path::new("/w/zotify/abc.OGG"), &meta),
+            server_place(Source::Spotify, Path::new("/w/abc.OGG"), &meta),
             "Spotify/Artist - Song _ Part 2.ogg"
         );
         assert_eq!(

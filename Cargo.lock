@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "multimusic"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2729,7 +2729,9 @@ dependencies = [
  "http",
  "image",
  "libc",
+ "librespot-audio",
  "librespot-core",
+ "librespot-metadata",
  "librespot-playback",
  "librespot-protocol",
  "lofty",

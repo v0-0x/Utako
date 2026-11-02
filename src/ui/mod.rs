@@ -1318,7 +1318,6 @@ impl eframe::App for App {
                             download_server,
                             ytdlp: (self.cfg.downloads.youtube && !cfg!(target_os = "ios"))
                                 .then_some(self.cfg.downloads.ytdlp_path.as_str()),
-                            zotify: (!cfg!(target_os = "ios")).then_some(self.cfg.downloads.zotify_path.as_str()),
                             search_text: &self.search_text,
                             search_cache: &mut self.search_cache,
                             filter_text: &mut self.filter_text,

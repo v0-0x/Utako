@@ -30,7 +30,6 @@ use crate::providers::apple_music::{self, AppleMusicApi};
 use crate::providers::soundcloud::{self, ScResolved, ScUser, SoundCloud};
 use crate::providers::spotify_api::{self, SpotifyApi, SpotifyPlaylistMeta};
 use crate::providers::youtube::{self, YtDlp};
-use crate::zotify::Zotify;
 
 mod downloads;
 mod pages;
@@ -198,8 +197,8 @@ pub enum Command {
     Search(String),
     /// Load an artist / album / playlist / song page: a page key or a pasted link.
     OpenPage(String),
-    /// Save songs as files: SoundCloud songs directly, Spotify songs from Spotify (with zotify),
-    /// Apple Music songs from a matching YouTube or SoundCloud upload. They go to the media
+    /// Save songs as files: SoundCloud songs directly, Spotify songs from Spotify itself, Apple
+    /// Music songs from a matching YouTube or SoundCloud upload. They go to the media
     /// server instead when that's on in Settings and it's connected.
     Download(Vec<Track>),
     /// Remove finished and failed entries from the Downloads list.
@@ -210,8 +209,6 @@ pub enum Command {
     CancelDownloads,
     /// Find out whether this yt-dlp program runs (answer in `Feed::ytdlp`).
     CheckYtDlp(String),
-    /// Find out whether this zotify program runs (answer in `Feed::zotify`).
-    CheckZotify(String),
     UpdateConfig(Box<Config>),
     Raise,
     Quit,
@@ -435,8 +432,6 @@ pub struct Feed {
     pub downloaded: HashMap<String, PathBuf>,
     /// The yt-dlp program last checked, and its version or why it doesn't run.
     pub ytdlp: Option<(String, Result<String, String>)>,
-    /// The zotify program last checked, and why it doesn't run.
-    pub zotify: Option<(String, Result<(), String>)>,
     pub spotify: AccountStatus,
     /// True while a Spotify login is stored, whatever the current status message says.
     pub spotify_logged_in: bool,
@@ -647,10 +642,6 @@ enum Internal {
     YtDlpChecked {
         program: String,
         result: Result<String, String>,
-    },
-    ZotifyChecked {
-        program: String,
-        result: Result<(), String>,
     },
     /// Status text while the Spotify library syncs.
     SyncProgress(String),
@@ -868,6 +859,8 @@ pub struct Service {
     download_batch: Vec<(String, Option<String>)>,
     /// The media server songs of that batch were sent to.
     download_batch_server: Option<String>,
+    /// The last Spotify connection for downloads failed: Spotify songs don't wait for one.
+    spotify_failed_for_downloads: bool,
 }
 
 /// Starts the service on its own thread, driving futures on `rt`. Returns the command sender.
@@ -1024,6 +1017,7 @@ impl Service {
             download_seq: 0,
             download_batch: Vec::new(),
             download_batch_server: None,
+            spotify_failed_for_downloads: false,
             cfg,
         };
         let (a, b, c) = receivers;
@@ -1505,20 +1499,6 @@ impl Service {
                     let _ = tx.send(Internal::YtDlpChecked { program, result });
                 });
             }
-            Command::CheckZotify(program) => {
-                let tx = self.internal_tx.clone();
-                let dir = self.paths.spotify_dir();
-                tokio::spawn(async move {
-                    let result = Zotify::new(&program, "", &dir).check().await.map_err(|e| {
-                        if e.is::<crate::zotify::NotInstalled>() {
-                            "isn't installed".to_string()
-                        } else {
-                            format!("{e:#}")
-                        }
-                    });
-                    let _ = tx.send(Internal::ZotifyChecked { program, result });
-                });
-            }
             Command::UpdateConfig(cfg) => self.update_config(*cfg).await,
             Command::AttachWindow(handle) => {
                 // Windows media controls belong to a window.
@@ -1922,6 +1902,9 @@ impl Service {
                         if let Some(key) = self.spotify_pending_page.take() {
                             self.open_page(key);
                         }
+                        // Spotify songs waiting to download can start.
+                        self.spotify_failed_for_downloads = false;
+                        self.pump_downloads();
                     }
                     Err(e) => {
                         tracing::warn!("Spotify connect failed: {e:#}");
@@ -1940,6 +1923,9 @@ impl Service {
                         if let Some(key) = self.spotify_pending_page.take() {
                             self.page_failed(&key, format!("Couldn't connect to Spotify: {e:#}"));
                         }
+                        // Spotify songs waiting to download fail with the reason.
+                        self.spotify_failed_for_downloads = true;
+                        self.pump_downloads();
                     }
                 }
             }
@@ -2159,10 +2145,6 @@ impl Service {
             Internal::DownloadDone { track, result } => self.download_finished(track, result),
             Internal::YtDlpChecked { program, result } => {
                 self.shared.feed.write().unwrap().ytdlp = Some((program, result));
-                self.shared.repaint();
-            }
-            Internal::ZotifyChecked { program, result } => {
-                self.shared.feed.write().unwrap().zotify = Some((program, result));
                 self.shared.repaint();
             }
             Internal::LastfmSession(r) => match r {

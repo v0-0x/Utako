@@ -11,18 +11,6 @@ yt-dlp (YouTube music videos, and finding Apple Music songs on YouTube for downl
   License: Unlicense
   Source:  https://github.com/yt-dlp/yt-dlp
 
-zotify (Spotify downloads), in tools/zotify: frozen with PyInstaller together with Python and
-the libraries it uses, listed with their versions in packaging/zotify/requirements.txt of
-Utako's source (librespot-python, protobuf, pycryptodomex, requests, urllib3, certifi, Pillow,
-mutagen, music-tag, zeroconf, tqdm, tabulate and a few more)
-  zotify:            Unlicense, https://github.com/zotify-dev/zotify
-  librespot-python:  Apache-2.0, https://github.com/kokarare1212/librespot-python
-  Python:            PSF License, https://www.python.org
-  PyInstaller:       GPL-2.0 with an exception for the programs it makes,
-                     https://github.com/pyinstaller/pyinstaller
-  The others keep their own licenses (MIT, BSD, Apache-2.0, MPL-2.0, HPND, GPL-2.0 for
-  mutagen), found in each project's source.
-
 Deno (runs YouTube's JavaScript for yt-dlp, which needs it to unlock video links)
   License: MIT
   Source:  https://github.com/denoland/deno

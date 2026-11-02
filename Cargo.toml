@@ -1,6 +1,6 @@
 [package]
 name = "multimusic"
-version = "0.9.4"
+version = "0.9.5"
 edition = "2021"
 description = "A fast, lightweight, native music player for local files, Spotify and SoundCloud"
 license = "MIT"
@@ -13,6 +13,9 @@ egui-phosphor = { version = "0.14", features = ["regular", "fill"] }
 librespot-core = { version = "0.8", default-features = false, features = ["native-tls"] }
 librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend", "native-tls"] }
 librespot-protocol = "0.8"
+# Saving Spotify songs: the file and its key the way the player gets them, and the song's files.
+librespot-audio = { version = "0.8", default-features = false, features = ["native-tls"] }
+librespot-metadata = { version = "0.8", default-features = false, features = ["native-tls"] }
 protobuf = "3"
 http = "1"
 lofty = "0.25"

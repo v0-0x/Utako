@@ -369,24 +369,6 @@ pub fn ytdlp_status(ui: &Ui, cx: &mut Cx, program: &str) -> Option<Result<String
     None
 }
 
-/// Whether the zotify `program` runs, or why not. Asks the service the first time (and whenever
-/// the program changes); `None` until it has answered.
-pub fn zotify_status(ui: &Ui, cx: &mut Cx, program: &str) -> Option<Result<(), String>> {
-    let program = program.trim().to_string();
-    if let Some((checked, result)) = &cx.feed.zotify {
-        if *checked == program {
-            return Some(result.clone());
-        }
-    }
-    let id = Id::new("zotify-check");
-    let asked: Option<String> = ui.data(|d| d.get_temp(id));
-    if asked.as_deref() != Some(program.as_str()) {
-        ui.data_mut(|d| d.insert_temp(id, program.clone()));
-        cx.actions.push(Action::Cmd(Command::CheckZotify(program)));
-    }
-    None
-}
-
 /// Width [`pill`] will take for `text`.
 pub fn pill_width(ui: &Ui, text: &str) -> f32 {
     ui.painter()

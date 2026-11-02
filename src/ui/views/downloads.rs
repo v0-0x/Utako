@@ -139,14 +139,19 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             }
             ui.add_space(18.0);
         }
-        let spotify = st
-            .zotify
-            .map(|program| spotify_note(widgets::zotify_status(ui, cx, program), cx.feed.spotify_logged_in));
-        // Where Spotify songs come from SoundCloud and YouTube too, they're named with Apple Music's.
-        let found = if spotify.as_ref().is_some_and(|(direct, _)| *direct) {
-            "Apple Music songs"
+        // Spotify songs come straight from Spotify while Utako is logged in to it; else they're
+        // found like Apple Music's.
+        let logged_in = cx.feed.spotify_logged_in;
+        let (spotify, found) = if logged_in {
+            (
+                "Spotify songs are saved straight from Spotify: Ogg Vorbis, 320 kbps with Premium.",
+                "Apple Music songs",
+            )
         } else {
-            "Spotify and Apple Music songs"
+            (
+                "Log in to Spotify to save Spotify songs straight from Spotify.",
+                "Spotify and Apple Music songs",
+            )
         };
         let note = match st.ytdlp.map(|program| widgets::ytdlp_status(ui, cx, program)) {
             Some(Some(Err(_))) => format!(
@@ -163,35 +168,10 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
                  audio is DRM-protected), then tagged with all their details."
             ),
         };
-        if let Some((_, spotify)) = spotify {
-            ui.label(egui::RichText::new(spotify).size(12.0).color(pal().text_faint));
-            ui.add_space(4.0);
-        }
+        ui.label(egui::RichText::new(spotify).size(12.0).color(pal().text_faint));
+        ui.add_space(4.0);
         ui.label(egui::RichText::new(note).size(12.0).color(pal().text_faint));
     });
-}
-
-/// How Spotify songs are saved: straight from Spotify (true) or found like Apple Music's, and
-/// what to say about it.
-fn spotify_note(zotify: Option<Result<(), String>>, logged_in: bool) -> (bool, String) {
-    match zotify {
-        Some(Ok(())) if logged_in => (
-            true,
-            "Spotify songs are saved straight from Spotify with zotify.".into(),
-        ),
-        Some(Ok(())) => (
-            false,
-            "Log in to Spotify to save Spotify songs straight from Spotify: zotify uses that login.".into(),
-        ),
-        Some(Err(why)) => (
-            false,
-            format!(
-                "zotify {why}, so Spotify songs are found like Apple Music's. {}",
-                crate::zotify::install_hint()
-            ),
-        ),
-        None => (true, "Checking zotify…".into()),
-    }
 }
 
 pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: &[Track], i: usize) {
