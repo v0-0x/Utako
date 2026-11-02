@@ -363,13 +363,6 @@ impl Service {
                 self.drop_server_playlists();
             }
         }
-        let playing_video = self.playing.as_ref().is_some_and(|t| t.source == Source::YouTube);
-        if old.playback.youtube_video != self.cfg.playback.youtube_video && playing_video {
-            let at = self.current_position();
-            let paused = self.status == PlayStatus::Paused;
-            self.reload_at(at).await;
-            self.pause_wanted = paused;
-        }
         if old.playback != self.cfg.playback {
             for mpv in self.mpv.iter().chain(self.mpv_spare.iter()) {
                 let p = &self.cfg.playback;

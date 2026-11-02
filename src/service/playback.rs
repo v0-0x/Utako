@@ -48,6 +48,9 @@ impl Service {
         // `start` is where this song starts; a position saved for another one doesn't apply.
         self.resume_position = None;
         self.playing = None;
+        // What the last song was (its format, its picture) isn't this one's.
+        self.quality = None;
+        self.video = None;
         self.duration = track.duration_secs();
         self.set_position(start);
         self.status = PlayStatus::Loading;
@@ -80,6 +83,7 @@ impl Service {
                             track,
                             url,
                             opts: Vec::new(),
+                            video: None,
                         },
                         Err(e) => Internal::LoadFailed {
                             seq,
@@ -241,31 +245,17 @@ impl Service {
         };
         self.silence_engine().await;
         let ytdlp = YtDlp::new(&self.cfg.downloads.ytdlp_path, &self.cfg.downloads.ytdlp_args);
-        let video = self.cfg.playback.youtube_video;
         let tx = self.internal_tx.clone();
         tokio::spawn(async move {
-            let msg = match youtube::stream(&ytdlp, &id, video).await {
-                Ok(stream) => {
-                    let mut opts = Vec::new();
-                    if let Some(agent) = stream.user_agent {
-                        opts.push(("user-agent", agent));
-                    }
-                    if video {
-                        opts.extend([
-                            ("vid", "auto".to_string()),
-                            ("force-window", "immediate".to_string()),
-                            ("force-media-title", format!("{} – {}", track.artist, track.title)),
-                            // Video needs more read-ahead than the few MB songs get.
-                            ("demuxer-max-bytes", "64MiB".to_string()),
-                        ]);
-                    }
-                    Internal::StreamReady {
-                        seq,
-                        track,
-                        url: stream.url,
-                        opts,
-                    }
-                }
+            let msg = match youtube::stream(&ytdlp, &id).await {
+                // mpv plays the sound; the app draws the picture in its centre panel.
+                Ok(streams) => Internal::StreamReady {
+                    seq,
+                    track,
+                    opts: link_options(&streams.audio),
+                    url: streams.audio.url,
+                    video: streams.video.map(Arc::new),
+                },
                 Err(e) => Internal::LoadFailed {
                     seq,
                     error: format!("YouTube: {e:#}"),
@@ -578,6 +568,7 @@ impl Service {
         }
         self.engine = Engine::None;
         self.playing = None;
+        self.video = None;
         self.set_position(0.0);
         self.set_status(PlayStatus::Stopped);
     }
@@ -652,7 +643,8 @@ impl Service {
                     self.status = PlayStatus::Paused;
                 }
                 self.on_track_started();
-                if self.playing.as_ref().is_some_and(|t| t.source == Source::SoundCloud) {
+                let streamed = [Source::SoundCloud, Source::YouTube, Source::Server];
+                if self.playing.as_ref().is_some_and(|t| streamed.contains(&t.source)) {
                     self.quality = self.mpv_stream_quality().await;
                 }
                 self.publish_player();
@@ -710,11 +702,13 @@ impl Service {
                 }
                 "error" => {
                     let name = self.playing.as_ref().map(|t| t.title.clone()).unwrap_or_default();
-                    self.load_failed(format!(
-                        "Can't play “{name}”: {}",
-                        error.unwrap_or_else(|| "unknown error".into())
-                    ))
-                    .await;
+                    let mut why = error.unwrap_or_else(|| "unknown error".into());
+                    // YouTube's links play only once yt-dlp could unlock them.
+                    let youtube = self.playing.as_ref().is_some_and(|t| t.source == Source::YouTube);
+                    if youtube && youtube::js_runtime_missing() {
+                        why = format!("{why}. {}", youtube::js_runtime_hint());
+                    }
+                    self.load_failed(format!("Can't play “{name}”: {why}")).await;
                 }
                 _ => {}
             },
@@ -1254,6 +1248,7 @@ impl Service {
             pv.context = self.queue.context_name.clone();
             pv.context_first = self.queue.context_first().map(|t| t.id.clone());
             pv.quality = self.quality.clone();
+            pv.video = self.video.clone();
             pv.sleep = self.sleep.clone();
         }
         self.mpris.update(
@@ -1409,4 +1404,23 @@ pub(super) fn same_album(a: &Track, b: &Track) -> bool {
     !album.is_empty()
         && album.eq_ignore_ascii_case(b.album.trim())
         && normalize_artist(&a.artist) == normalize_artist(&b.artist)
+}
+
+/// mpv's options for a link: the User-Agent and headers it was made for (a header whose
+/// value has a comma is left out: mpv's list option would split it).
+fn link_options(link: &youtube::Link) -> Vec<(&'static str, String)> {
+    let mut opts = Vec::new();
+    if let Some(agent) = &link.user_agent {
+        opts.push(("user-agent", agent.clone()));
+    }
+    let fields: Vec<String> = link
+        .headers
+        .iter()
+        .filter(|(_, value)| !value.contains(','))
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect();
+    if !fields.is_empty() {
+        opts.push(("http-header-fields", fields.join(",")));
+    }
+    opts
 }

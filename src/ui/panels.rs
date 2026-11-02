@@ -826,9 +826,13 @@ pub fn player_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
             {
                 cx.actions.push(Action::Go(View::NowPlaying));
             }
-            if cx.player.current.as_ref().is_some_and(|t| t.source == Source::YouTube) {
-                let on = cx.youtube_video;
-                let tip = if on { "Hide the video" } else { "Show the video" };
+            if cx.player.video.is_some() && !cfg!(target_os = "ios") {
+                let on = cx.video_shown;
+                let tip = if on {
+                    "Back to your page (the song plays on)"
+                } else {
+                    "Show the video"
+                };
                 if dock_button(
                     ui,
                     take_slot(&mut rx, cy, CONTROL),
@@ -839,7 +843,7 @@ pub fn player_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
                 )
                 .clicked()
                 {
-                    cx.actions.push(Action::SetYouTubeVideo(!on));
+                    cx.actions.push(Action::ShowVideo(!on));
                 }
             }
             if !compact || cx.player.sleep.is_some() {

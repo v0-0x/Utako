@@ -9,6 +9,8 @@ mod settings;
 mod tag_editor;
 pub mod theme;
 pub mod themes;
+#[cfg(not(target_os = "ios"))]
+mod video;
 mod views;
 mod widgets;
 
@@ -81,8 +83,8 @@ pub enum Action {
     /// Holiday themes: "auto", "off" or a holiday's id.
     SetHoliday(String),
     SetHolidayEffects(bool),
-    /// Show or hide a YouTube music video's picture.
-    SetYouTubeVideo(bool),
+    /// Open the music video playing in the centre panel, or go back to the page.
+    ShowVideo(bool),
 }
 
 /// Per-frame context handed to every view.
@@ -106,8 +108,8 @@ pub struct Cx<'a> {
     pub theme: &'a str,
     pub holiday_setting: &'a str,
     pub holiday_effects: bool,
-    /// Whether YouTube music videos show their picture.
-    pub youtube_video: bool,
+    /// The centre panel shows the music video playing.
+    pub video_shown: bool,
 }
 
 /// Largest texture egui may make (its glyph atlas grows up to this square).
@@ -183,6 +185,14 @@ pub struct App {
     art: ArtCache,
     logo: egui::TextureHandle,
     wordmark: egui::TextureHandle,
+    /// The music video player of the centre panel, while a music video plays.
+    #[cfg(not(target_os = "ios"))]
+    video: Option<video::VideoPlayer>,
+    /// The centre panel shows the video instead of the page.
+    video_open: bool,
+    /// The ffmpeg that decodes the video's picture.
+    #[cfg_attr(target_os = "ios", allow(dead_code))]
+    ffmpeg: String,
     view: View,
     history: Vec<View>,
     forward: Vec<View>,
@@ -265,6 +275,10 @@ impl App {
             art,
             logo,
             wordmark,
+            #[cfg(not(target_os = "ios"))]
+            video: None,
+            video_open: false,
+            ffmpeg: crate::tools::resolve("", "ffmpeg"),
             view: View::Home,
             history: Vec::new(),
             forward: Vec::new(),
@@ -310,7 +324,42 @@ impl App {
         let _ = self.cmd.send(c);
     }
 
+    /// Keeps the video player with the music video playing: a new one opens in the centre
+    /// panel (when Settings says so), and anything else closes it.
+    fn follow_video(&mut self, player: &PlayerView) {
+        #[cfg(not(target_os = "ios"))]
+        {
+            let current = player
+                .current
+                .as_ref()
+                .filter(|t| t.source == crate::model::Source::YouTube);
+            match (current, &player.video) {
+                (Some(track), Some(link)) => {
+                    if !self.video.as_ref().is_some_and(|v| v.is_for(&track.id, link)) {
+                        // The same video loaded again (after a network hiccup) stays as it was.
+                        let same = self.video.as_ref().is_some_and(|v| v.track_id == track.id);
+                        self.video = Some(video::VideoPlayer::new(track.id.clone(), link.clone()));
+                        if !same {
+                            self.video_open = self.cfg.playback.youtube_video;
+                        }
+                    }
+                }
+                _ => {
+                    self.video = None;
+                    self.video_open = false;
+                }
+            }
+        }
+        #[cfg(target_os = "ios")]
+        {
+            let _ = player;
+            self.video_open = false;
+        }
+    }
+
     fn go(&mut self, v: View) {
+        // Going somewhere leaves the video (the song plays on).
+        self.video_open = false;
         if v != self.view {
             self.history.push(std::mem::replace(&mut self.view, v));
             if self.history.len() > 50 {
@@ -325,6 +374,9 @@ impl App {
     }
 
     fn back(&mut self) {
+        if std::mem::take(&mut self.video_open) {
+            return;
+        }
         if let Some(v) = self.history.pop() {
             self.forward.push(std::mem::replace(&mut self.view, v));
             self.filter_text.clear();
@@ -451,7 +503,7 @@ impl App {
                 }
                 Action::SetHoliday(h) => self.cfg.ui.holiday = h,
                 Action::SetHolidayEffects(on) => self.cfg.ui.holiday_effects = on,
-                Action::SetYouTubeVideo(on) => self.cfg.playback.youtube_video = on,
+                Action::ShowVideo(on) => self.video_open = on,
             }
         }
         let _ = ctx;
@@ -1090,6 +1142,7 @@ impl eframe::App for App {
 
         let player_guard = shared.player.read().unwrap();
         let player: &PlayerView = &player_guard;
+        self.follow_video(player);
         self.update_colors(&ctx, player);
         self.keyboard(&ctx, player);
         let lib_guard = shared.library.read().unwrap();
@@ -1148,7 +1201,7 @@ impl eframe::App for App {
                 theme: &theme_id,
                 holiday_setting: &holiday_setting,
                 holiday_effects: self.cfg.ui.holiday_effects,
-                youtube_video: self.cfg.playback.youtube_video,
+                video_shown: self.video_open,
             };
 
             panels::player_dock(ui, &mut cx, (show_right || overlay).then_some(right_tab));
@@ -1197,6 +1250,15 @@ impl eframe::App for App {
                 )
                 .show(ui, |ui| {
                     ui.multiply_opacity(1.0 - (1.0 - fade).powi(2));
+                    // The music video, over the whole panel (never the rest of the window).
+                    #[cfg(not(target_os = "ios"))]
+                    if self.video_open && self.view != View::NowPlaying {
+                        if let Some(player) = self.video.as_mut() {
+                            let rect = ui.max_rect();
+                            player.show(ui, &mut cx, rect, &self.ffmpeg);
+                            return;
+                        }
+                    }
                     if let Some(h) = self.holiday {
                         holiday::backdrop(ui.painter(), ui.max_rect(), h, now as f32, moving);
                     }

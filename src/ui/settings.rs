@@ -521,11 +521,12 @@ pub fn show(ui: &mut Ui, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState, 
                      follow their tags, SoundCloud and untagged files play 6 dB quieter. Off in bit-perfect mode.",
                 );
                 if !cfg!(target_os = "ios") {
-                    ui.checkbox(&mut cfg.playback.youtube_video, "Show the video of YouTube music videos");
+                    ui.checkbox(&mut cfg.playback.youtube_video, "Open music videos in the player when they start");
                     hint(
                         ui,
-                        "In a window of its own, next to Utako. Closing it hides the video and the song plays on; \
-                         off, music videos play like songs. Needs yt-dlp (it comes with Utako on Windows and macOS).",
+                        "The video plays in the middle of the window; its back arrow returns to your page while the \
+                         song plays on, and the screen button in the player brings it back. Off, music videos start \
+                         like songs. Needs yt-dlp and ffmpeg (they come with Utako on Windows and macOS).",
                     );
                 }
                 ui.checkbox(&mut cfg.lyrics.enabled, "Show lyrics");

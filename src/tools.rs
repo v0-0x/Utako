@@ -25,6 +25,21 @@ pub fn resolve(configured: &str, default_name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+/// Where program `name` is: a bundled (or Homebrew) copy first, then the PATH.
+pub fn find(name: &str) -> Option<PathBuf> {
+    if let Some(p) = candidates(name).into_iter().find(|p| p.is_file()) {
+        return Some(p);
+    }
+    let file = if cfg!(windows) && !name.to_ascii_lowercase().ends_with(".exe") {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(&file))
+        .find(|p| p.is_file())
+}
+
 /// Where a bundled (or Homebrew) copy of `name` may be.
 fn candidates(name: &str) -> Vec<PathBuf> {
     let file = if cfg!(windows) && !name.to_ascii_lowercase().ends_with(".exe") {
@@ -90,6 +105,28 @@ pub fn command(program: impl AsRef<OsStr>) -> tokio::process::Command {
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// The same for a program read from a thread of its own (ffmpeg decoding a video's picture).
+/// On Linux it ends with Utako, even if Utako is killed.
+#[cfg_attr(target_os = "ios", allow(dead_code))]
+pub fn std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    cmd
+}
 
 /// Makes a child process end when Utako does, even if Utako crashes. (Linux uses
 /// `PR_SET_PDEATHSIG` when spawning; elsewhere stale players are stopped at the next start.)

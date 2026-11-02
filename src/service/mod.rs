@@ -260,6 +260,8 @@ pub struct PlayerView {
     /// Format of what's playing (codec, bit depth, sample rate).
     pub quality: Option<AudioQuality>,
     pub sleep: Option<Sleep>,
+    /// The picture of the music video playing, for the player in the centre panel.
+    pub video: Option<Arc<crate::providers::youtube::VideoLink>>,
 }
 
 impl Default for PlayerView {
@@ -280,6 +282,7 @@ impl Default for PlayerView {
             context: String::new(),
             context_first: None,
             quality: None,
+            video: None,
             sleep: None,
         }
     }
@@ -536,8 +539,10 @@ enum Internal {
         seq: u64,
         track: Track,
         url: String,
-        /// mpv options for this file only (a YouTube video's picture and window).
+        /// mpv options for this file only (the headers a YouTube link was made for).
         opts: Vec<(&'static str, String)>,
+        /// A music video's picture, drawn by the app while mpv plays the sound.
+        video: Option<Arc<crate::providers::youtube::VideoLink>>,
     },
     Resolved {
         seq: u64,
@@ -758,6 +763,8 @@ pub struct Service {
     /// Playable track for the current queue entry (differs for resolved imports).
     playing: Option<Track>,
     quality: Option<AudioQuality>,
+    /// The picture of the music video playing (drawn by the UI).
+    video: Option<Arc<crate::providers::youtube::VideoLink>>,
     load_seq: u64,
     started_reported: bool,
     resume_position: Option<f64>,
@@ -942,6 +949,7 @@ impl Service {
             duration: 0.0,
             playing: None,
             quality: None,
+            video: None,
             load_seq: 0,
             started_reported: false,
             resume_position: None,
@@ -1834,9 +1842,16 @@ impl Service {
                 };
                 Box::pin(self.handle(cmd)).await;
             }
-            Internal::StreamReady { seq, track, url, opts } => {
+            Internal::StreamReady {
+                seq,
+                track,
+                url,
+                opts,
+                video,
+            } => {
                 if seq == self.load_seq {
                     let start = self.position;
+                    self.video = video;
                     self.start_mpv_with(track, &url, start, &opts).await;
                 }
             }

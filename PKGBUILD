@@ -4,7 +4,7 @@
 pkgname=multimusic
 # The same as `version` in Cargo.toml (a test checks). A fixed version, not a pkgver() function:
 # makepkg writes what pkgver() returns into this file, which then blocks `git pull`.
-pkgver=0.9.1
+pkgver=0.9.2
 pkgrel=1
 pkgdesc="Utako: lightweight native music player for local files, Spotify and SoundCloud with synced lyrics, Discord Rich Presence and Last.fm scrobbling"
 arch=('x86_64' 'aarch64')
@@ -18,7 +18,8 @@ optdepends=('pipewire-pulse: Spotify output on PipeWire desktops (usually alread
             'noto-fonts-cjk: Japanese, Chinese and Korean song titles'
             'inter-font: nicer interface font'
             'discord: Rich Presence (also works with Vesktop / arRPC)'
-            'yt-dlp: download Spotify and Apple Music songs (found on YouTube)')
+            'yt-dlp: YouTube music videos, and Spotify and Apple Music downloads (found on YouTube)'
+            'deno: unlocks YouTube video links for yt-dlp (node or bun work too)')
 # The app is called Utako (Sumo until 0.9.0); the package keeps its first name so installed copies
 # update in place.
 provides=('multimusic' 'sumo' 'utako')

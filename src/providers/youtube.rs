@@ -114,8 +114,26 @@ impl YtDlp {
         if let Some(dir) = crate::tools::bundled_ffmpeg_dir() {
             cmd.arg("--ffmpeg-location").arg(dir);
         }
+        // The JavaScript runtime that unlocks YouTube's streams, once it's known.
+        if let Some(JsRuntime::Found(args)) = JS_RUNTIME.get() {
+            cmd.args(args);
+        }
         cmd.args(&self.args).stdin(Stdio::null()).kill_on_drop(true);
         cmd
+    }
+
+    /// Whether this yt-dlp has option `name` (from its `--help`).
+    async fn has_option(&self, name: &str) -> bool {
+        let mut cmd = crate::tools::command(&self.program);
+        cmd.arg("--help")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
+            Ok(Ok(out)) => String::from_utf8_lossy(&out.stdout).contains(name),
+            _ => false,
+        }
     }
 
     /// yt-dlp's version, i.e. whether it is installed and runs.
@@ -135,6 +153,64 @@ impl YtDlp {
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
+}
+
+/// The JavaScript runtime yt-dlp uses for YouTube. YouTube hides its stream links behind
+/// JavaScript, and since late 2025 yt-dlp runs that JavaScript in Deno, Node, Bun or QuickJS
+/// ("EJS"); without one it falls back to a few YouTube clients whose streams often don't play.
+#[derive(Debug, Clone, PartialEq)]
+pub enum JsRuntime {
+    /// An older yt-dlp, which unlocks the links itself.
+    NotNeeded,
+    /// The options that point yt-dlp at the runtime found.
+    Found(Vec<String>),
+    /// None installed.
+    Missing,
+}
+
+static JS_RUNTIME: std::sync::OnceLock<JsRuntime> = std::sync::OnceLock::new();
+
+/// Works out the JavaScript runtime once (it asks yt-dlp for its options), so the commands
+/// made after it pass it on.
+pub async fn js_runtime(ytdlp: &YtDlp) -> JsRuntime {
+    if let Some(known) = JS_RUNTIME.get() {
+        return known.clone();
+    }
+    let supported = ytdlp.has_option("--js-runtimes").await;
+    let found = js_runtime_for(supported, crate::tools::find);
+    if found == JsRuntime::Missing {
+        tracing::warn!("yt-dlp has no JavaScript runtime for YouTube (install deno)");
+    }
+    let _ = JS_RUNTIME.set(found.clone());
+    found
+}
+
+/// The runtime yt-dlp should use: the Deno that comes with Utako (Windows, macOS), else the
+/// first one installed, in yt-dlp's own order of preference.
+fn js_runtime_for(supported: bool, find: impl Fn(&str) -> Option<PathBuf>) -> JsRuntime {
+    if !supported {
+        return JsRuntime::NotNeeded;
+    }
+    for (program, runtime) in [("deno", "deno"), ("node", "node"), ("bun", "bun"), ("qjs", "quickjs")] {
+        if let Some(path) = find(program) {
+            return JsRuntime::Found(vec!["--js-runtimes".into(), format!("{runtime}:{}", path.display())]);
+        }
+    }
+    JsRuntime::Missing
+}
+
+/// What to do when YouTube's streams don't play for lack of a JavaScript runtime.
+pub fn js_runtime_hint() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "yt-dlp needs Deno to unlock YouTube's streams: sudo pacman -S deno, then start Utako again"
+    } else {
+        "yt-dlp needs Deno to unlock YouTube's streams; it comes with Utako, so reinstall Utako"
+    }
+}
+
+/// Whether the JavaScript runtime is known to be missing.
+pub fn js_runtime_missing() -> bool {
+    JS_RUNTIME.get() == Some(&JsRuntime::Missing)
 }
 
 /// Splits options typed in a text field: by spaces, keeping "quoted parts" together.
@@ -335,6 +411,7 @@ async fn run_download(
     stem: &str,
     progress: &(dyn Fn(f32) + Send + Sync),
 ) -> Result<PathBuf> {
+    js_runtime(ytdlp).await;
     let mut cmd = ytdlp.command();
     cmd.args(ytdlp.download_args())
         .args([
@@ -805,29 +882,46 @@ fn strip_decorations(title: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// A video's streams, ready for mpv.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Stream {
-    /// What mpv opens: the audio's link, or with the picture an `edl://` joining the video
-    /// and audio streams (YouTube serves them apart above 360p).
+/// A link and what to send with it: the User-Agent and the few headers the link was made
+/// for (Referer, Cookie, X-Forwarded-For), as mpv's own youtube-dl support sends them.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Link {
     pub url: String,
-    /// The User-Agent the links were made for.
     pub user_agent: Option<String>,
+    pub headers: Vec<(String, String)>,
 }
 
-/// Looks up video `id`'s streams: only the sound, or with `video` the picture too (up to
-/// 1080p, not AV1, which older computers can't decode smoothly).
-pub async fn stream(ytdlp: &YtDlp, id: &str, video: bool) -> Result<Stream> {
+/// A music video's picture, for the player in the app's centre panel.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct VideoLink {
+    pub link: Link,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    /// "VP9 720p"
+    pub label: String,
+}
+
+/// A music video's streams: the sound (played by mpv) and the picture (drawn in the app).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Streams {
+    pub audio: Link,
+    pub video: Option<VideoLink>,
+}
+
+/// Up to 720p (the centre panel is never much bigger) and not AV1, which older computers
+/// can't decode smoothly; direct links before HLS ones, which seek more slowly.
+const VIDEO_FORMAT: &str = "bv[height<=?720][vcodec!^=av01][protocol^=http]+ba[protocol^=http]/\
+                            bv[height<=?720][vcodec!^=av01]+ba/b[height<=?720]/b";
+
+/// Looks up video `id`'s streams.
+pub async fn stream(ytdlp: &YtDlp, id: &str) -> Result<Streams> {
     if !is_video_id(id) {
         bail!("not a YouTube video");
     }
-    let format = if video {
-        "bestvideo[height<=?1080][vcodec!^=av01]+bestaudio/best[height<=?1080]/best"
-    } else {
-        "bestaudio/best"
-    };
+    js_runtime(ytdlp).await;
     let mut cmd = ytdlp.command();
-    cmd.args(["--no-playlist", "--dump-single-json", "--format", format])
+    cmd.args(["--no-playlist", "--dump-single-json", "--format", VIDEO_FORMAT])
         .arg(watch_url(id))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -836,46 +930,80 @@ pub async fn stream(ytdlp: &YtDlp, id: &str, video: bool) -> Result<Stream> {
         .map_err(|_| anyhow!("YouTube didn't answer in time"))?
         .map_err(spawn_error)?;
     if !out.status.success() {
-        bail!("{}", explain(&last_error(&String::from_utf8_lossy(&out.stderr))));
+        let mut why = explain(&last_error(&String::from_utf8_lossy(&out.stderr)));
+        if js_runtime_missing() {
+            why = format!("{why} ({})", js_runtime_hint());
+        }
+        bail!("{why}");
     }
     parse_stream(&out.stdout)
 }
 
-pub fn parse_stream(json: &[u8]) -> Result<Stream> {
+pub fn parse_stream(json: &[u8]) -> Result<Streams> {
     let v: Value = serde_json::from_slice(json).context("unexpected output from yt-dlp")?;
-    let url_of = |f: &Value| f.get("url").and_then(Value::as_str).map(str::to_owned);
-    let agent_of = |f: &Value| {
-        f.get("http_headers")
-            .and_then(|h| h.get("User-Agent"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
     let picked = v
         .get("requested_formats")
         .and_then(Value::as_array)
         .filter(|f| f.len() == 2);
-    if let Some(formats) = picked {
-        let (Some(video), Some(audio)) = (url_of(&formats[0]), url_of(&formats[1])) else {
-            bail!("YouTube gave no stream");
-        };
-        return Ok(Stream {
-            url: edl_join(&video, &audio),
-            user_agent: agent_of(&formats[0]),
-        });
-    }
-    let url = url_of(&v).ok_or_else(|| anyhow!("YouTube gave no stream"))?;
-    Ok(Stream {
+    let (video_format, audio_format) = match picked {
+        Some(formats) => (&formats[0], &formats[1]),
+        // One stream with both (YouTube's 360p "18", or a site without separate streams).
+        None => (&v, &v),
+    };
+    let audio = link_of(audio_format).ok_or_else(|| anyhow!("YouTube gave no stream"))?;
+    let has_video = video_format
+        .get("vcodec")
+        .and_then(Value::as_str)
+        .is_some_and(|c| c != "none");
+    let video = has_video.then(|| link_of(video_format)).flatten().map(|link| {
+        let num = |k: &str| video_format.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+        let (width, height) = (num("width") as u32, num("height") as u32);
+        let codec = video_format.get("vcodec").and_then(Value::as_str).unwrap_or("");
+        let codec = codec_name(codec);
+        VideoLink {
+            link,
+            width,
+            height,
+            fps: num("fps"),
+            label: match height {
+                0 => codec.to_string(),
+                h => format!("{codec} {h}p"),
+            },
+        }
+    });
+    Ok(Streams { audio, video })
+}
+
+fn link_of(format: &Value) -> Option<Link> {
+    let url = format.get("url").and_then(Value::as_str)?.to_string();
+    let headers = format.get("http_headers").and_then(Value::as_object);
+    let header = |name: &str| {
+        headers
+            .and_then(|h| h.get(name))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    Some(Link {
         url,
-        user_agent: agent_of(&v),
+        user_agent: header("User-Agent"),
+        headers: ["Referer", "Cookie", "X-Forwarded-For"]
+            .into_iter()
+            .filter_map(|name| header(name).map(|v| (name.to_string(), v)))
+            .collect(),
     })
 }
 
-/// mpv's EDL for one video stream and one audio stream played together (as mpv's own
-/// youtube-dl support does): `%<bytes>%` quotes each link.
-fn edl_join(video: &str, audio: &str) -> String {
-    let part = |url: &str| format!("!no_clip;!no_chapters;%{}%{url}", url.len());
-    format!("edl://{};!new_stream;{}", part(video), part(audio))
+/// "vp09.00.40.08" → "VP9", "avc1.4d401f" → "H.264".
+fn codec_name(codec: &str) -> &str {
+    match codec.split('.').next().unwrap_or("") {
+        "vp09" | "vp9" => "VP9",
+        "avc1" | "h264" => "H.264",
+        "av01" => "AV1",
+        "hev1" | "hvc1" => "HEVC",
+        _ => "Video",
+    }
 }
+
 #[cfg(test)]
 mod video_tests {
     use super::*;
@@ -923,16 +1051,54 @@ mod video_tests {
 
     #[test]
     fn streams() {
-        let audio = br#"{"url": "https://a.example/x?b=1,2", "http_headers": {"User-Agent": "UA"}}"#;
-        let s = parse_stream(audio).unwrap();
-        assert_eq!(s.url, "https://a.example/x?b=1,2");
-        assert_eq!(s.user_agent.as_deref(), Some("UA"));
-        let both = br#"{"requested_formats": [{"url": "https://v.example/v"}, {"url": "https://a.example/a;b"}]}"#;
+        // One stream with both: the sound and the picture come from it.
+        let both = br#"{"url": "https://a.example/x?b=1,2", "vcodec": "avc1.42001E", "height": 360, "width": 640,
+            "http_headers": {"User-Agent": "UA", "Referer": "https://www.youtube.com/", "Accept": "a,b"}}"#;
         let s = parse_stream(both).unwrap();
+        assert_eq!(s.audio.url, "https://a.example/x?b=1,2");
+        assert_eq!(s.audio.user_agent.as_deref(), Some("UA"));
+        // Only the headers mpv's own youtube-dl support sends (no comma lists like Accept).
         assert_eq!(
-            s.url,
-            "edl://!no_clip;!no_chapters;%19%https://v.example/v;!new_stream;!no_clip;!no_chapters;%21%https://a.example/a;b"
+            s.audio.headers,
+            vec![("Referer".to_string(), "https://www.youtube.com/".to_string())]
         );
+        let v = s.video.unwrap();
+        assert_eq!((v.width, v.height, v.label.as_str()), (640, 360, "H.264 360p"));
+
+        // Separate picture and sound.
+        let apart = br#"{"requested_formats": [
+            {"url": "https://v.example/v", "vcodec": "vp09.00.40.08", "acodec": "none", "width": 1280, "height": 720, "fps": 30},
+            {"url": "https://a.example/a;b", "vcodec": "none", "acodec": "opus"}]}"#;
+        let s = parse_stream(apart).unwrap();
+        assert_eq!(s.audio.url, "https://a.example/a;b");
+        let v = s.video.unwrap();
+        assert_eq!(v.link.url, "https://v.example/v");
+        assert_eq!(
+            (v.width, v.height, v.fps, v.label.as_str()),
+            (1280, 720, 30.0, "VP9 720p")
+        );
+
+        // Sound only (no picture to draw).
+        let audio = br#"{"url": "https://a.example/a", "vcodec": "none"}"#;
+        assert!(parse_stream(audio).unwrap().video.is_none());
         assert!(parse_stream(b"{}").is_err());
+    }
+
+    #[test]
+    fn js_runtimes() {
+        let none = |_: &str| None;
+        assert_eq!(js_runtime_for(false, none), JsRuntime::NotNeeded);
+        assert_eq!(js_runtime_for(true, none), JsRuntime::Missing);
+        // Deno first, then the others in yt-dlp's order.
+        let node_only = |p: &str| (p == "node").then(|| PathBuf::from("/usr/bin/node"));
+        assert_eq!(
+            js_runtime_for(true, node_only),
+            JsRuntime::Found(vec!["--js-runtimes".into(), "node:/usr/bin/node".into()])
+        );
+        let both = |p: &str| matches!(p, "node" | "deno").then(|| PathBuf::from(format!("/x/{p}")));
+        assert_eq!(
+            js_runtime_for(true, both),
+            JsRuntime::Found(vec!["--js-runtimes".into(), "deno:/x/deno".into()])
+        );
     }
 }
