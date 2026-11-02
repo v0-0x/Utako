@@ -1,4 +1,4 @@
-//! The library: local scans, and syncing playlists and likes from Spotify, SoundCloud and Apple Music.
+//! The library: local scans, and syncing playlists and likes from Spotify and SoundCloud.
 
 use super::*;
 
@@ -618,74 +618,6 @@ impl Service {
         self.set_account(|f| &mut f.soundcloud, AccountStatus::Connected(sync.user));
         self.shared
             .info(format!("SoundCloud synced: likes + {count} playlists"));
-    }
-
-    // ---------------------------------------------------------------- apple music
-
-    pub(super) fn import_apple_api(&mut self) {
-        let c = &self.cfg.apple_music;
-        if c.user_token.trim().is_empty() {
-            self.shared.error("Paste your Apple Music user token in Settings first");
-            return;
-        }
-        self.shared.info("Importing from Apple Music…");
-        let http = self.http.clone();
-        let (dev, user, store) = (c.developer_token.clone(), c.user_token.clone(), c.storefront.clone());
-        let tx = self.internal_tx.clone();
-        tokio::spawn(async move {
-            let r = async {
-                let dev = if dev.trim().is_empty() {
-                    apple_music::scrape_developer_token(&http).await?
-                } else {
-                    dev
-                };
-                let store = if store.trim().is_empty() {
-                    "us".to_string()
-                } else {
-                    store
-                };
-                let api = AppleMusicApi::new(http, dev.trim(), user.trim(), &store);
-                let songs = api.library_songs().await?;
-                let playlists = api.library_playlists().await?;
-                Ok((songs, playlists))
-            }
-            .await;
-            let _ = tx.send(Internal::AppleImported(r));
-        });
-    }
-
-    pub(super) fn merge_apple(&mut self, songs: Vec<Track>, imported: Vec<ImportedPlaylist>) {
-        let mut tracks = songs.clone();
-        let mut playlists = Vec::new();
-        if !songs.is_empty() {
-            playlists.push(Playlist {
-                id: "applemusic:library".into(),
-                name: "Apple Music Library".into(),
-                kind: PlaylistKind::AppleMusic,
-                remote_id: None,
-                description: "Songs imported from Apple Music".into(),
-                art: songs.iter().find_map(|t| t.art.clone()),
-                track_ids: songs.iter().map(|t| t.id.clone()).collect(),
-            });
-        }
-        let count = imported.len();
-        for p in imported {
-            playlists.push(Playlist {
-                id: format!("applemusic:{}", p.remote_id),
-                name: p.name,
-                kind: PlaylistKind::AppleMusic,
-                remote_id: Some(p.remote_id),
-                description: p.description,
-                art: p.art.or_else(|| p.tracks.iter().find_map(|t| t.art.clone())),
-                track_ids: p.tracks.iter().map(|t| t.id.clone()).collect(),
-            });
-            tracks.extend(p.tracks);
-        }
-        self.merge_imported(tracks, playlists, &[]);
-        self.shared.info(format!(
-            "Apple Music imported: {} songs, {count} playlists",
-            songs.len()
-        ));
     }
 }
 

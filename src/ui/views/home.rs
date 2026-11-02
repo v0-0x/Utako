@@ -247,14 +247,9 @@ pub(super) fn onboarding(ui: &mut Ui, cx: &mut Cx) {
                 "Add your SoundCloud profile to import likes and playlists",
             ),
             (
-                icon::APPLE_LOGO,
-                source_color(Source::AppleMusic),
-                "Import your Apple Music library (drop Library.xml here)",
-            ),
-            (
                 icon::LINK,
                 pal().text_dim,
-                "Or paste any Spotify, SoundCloud or Apple Music link into the search bar",
+                "Or paste any Spotify or SoundCloud link into the search bar",
             ),
         ] {
             ui.horizontal(|ui| {

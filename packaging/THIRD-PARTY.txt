@@ -7,14 +7,6 @@ mpv (local files and SoundCloud playback)
   Windows build: https://github.com/shinchiro/mpv-winbuild-cmake
   macOS builds:  https://laboratory.stolendata.net/~djinn/mpv_osx/
 
-yt-dlp (YouTube music videos, and finding Apple Music songs on YouTube for downloads)
-  License: Unlicense
-  Source:  https://github.com/yt-dlp/yt-dlp
-
-Deno (runs YouTube's JavaScript for yt-dlp, which needs it to unlock video links)
-  License: MIT
-  Source:  https://github.com/denoland/deno
-
 FFmpeg / ffprobe (saving and converting downloads, and drawing music videos)
   License: LGPL-2.1-or-later (Windows: LGPL build) / GPL (macOS static build)
   Source:  https://ffmpeg.org/download.html

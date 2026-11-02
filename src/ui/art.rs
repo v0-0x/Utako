@@ -174,10 +174,62 @@ async fn load_bytes(http: &reqwest::Client, disk: &Path, src: &str) -> Option<Ve
         return tokio::fs::read(&path).await.ok();
     }
     // An audio file: read its embedded front cover.
-    tokio::task::spawn_blocking(move || embedded_picture(&path))
+    let video = crate::library::scanner::is_video_file(&path);
+    let file = path.clone();
+    let embedded = tokio::task::spawn_blocking(move || embedded_picture(&file))
         .await
         .ok()
-        .flatten()
+        .flatten();
+    if embedded.is_some() || !video || cfg!(target_os = "ios") {
+        return embedded;
+    }
+    // A video file without one: a frame of the video, kept on disk.
+    let modified = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let name: String = Md5::digest(format!("frame:{src}:{modified}").as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let cached = disk.join(name);
+    if let Ok(b) = tokio::fs::read(&cached).await {
+        return Some(b);
+    }
+    let frame = video_frame(&path).await?;
+    let _ = tokio::fs::write(&cached, &frame).await;
+    Some(frame)
+}
+
+/// A JPEG of a frame a few seconds into a video (its first, when it's shorter).
+async fn video_frame(path: &Path) -> Option<Vec<u8>> {
+    for at in ["5", "0"] {
+        let out = crate::tools::command(crate::tools::resolve("ffmpeg", "ffmpeg"))
+            .args(["-v", "error", "-ss", at, "-i"])
+            .arg(path)
+            .args([
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=480:-2",
+                "-f",
+                "image2pipe",
+                "-c:v",
+                "mjpeg",
+                "pipe:1",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .ok()?;
+        if out.status.success() && !out.stdout.is_empty() {
+            return Some(out.stdout);
+        }
+    }
+    None
 }
 
 fn embedded_picture(path: &Path) -> Option<Vec<u8>> {

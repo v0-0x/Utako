@@ -40,7 +40,7 @@ pub enum View {
     Playlist(String),
     /// An artist in the library, by key.
     Artist(String),
-    /// A Spotify / SoundCloud / Apple Music page, by page key or link.
+    /// A Spotify / SoundCloud page, by page key or link.
     Page(String),
     NowPlaying,
     Downloads,
@@ -324,16 +324,13 @@ impl App {
         let _ = self.cmd.send(c);
     }
 
-    /// Keeps the video player with the music video playing: a new one opens in the centre
-    /// panel (when Settings says so), and anything else closes it.
+    /// Keeps the video player with the music video playing (from YouTube, a video file or the
+    /// media server): a new one opens in the centre panel (when Settings says so), and anything
+    /// else closes it.
     fn follow_video(&mut self, player: &PlayerView) {
         #[cfg(not(target_os = "ios"))]
         {
-            let current = player
-                .current
-                .as_ref()
-                .filter(|t| t.source == crate::model::Source::YouTube);
-            match (current, &player.video) {
+            match (player.current.as_ref(), &player.video) {
                 (Some(track), Some(link)) => {
                     if !self.video.as_ref().is_some_and(|v| v.is_for(&track.id, link)) {
                         // The same video loaded again (after a network hiccup) stays as it was.
@@ -647,7 +644,7 @@ impl App {
         }
     }
 
-    /// Dropped folders join the library, .m3u files and Library.xml get imported.
+    /// Dropped folders join the library, .m3u files get imported, settings files offer to.
     fn dropped_files(&mut self, ctx: &egui::Context) {
         let files: Vec<std::path::PathBuf> = ctx.input(|i| {
             i.raw
@@ -668,8 +665,6 @@ impl App {
                 self.send(Command::ImportM3u(path));
             } else if crate::backup::is_settings_file(&path) {
                 self.dialog = Some(Dialog::ImportSettings { path });
-            } else if lower.ends_with(".xml") {
-                self.send(Command::ImportAppleXml(path));
             }
         }
     }
@@ -1316,8 +1311,6 @@ impl eframe::App for App {
                             download_dir: &download_dir,
                             download_custom: !custom.is_empty(),
                             download_server,
-                            ytdlp: (self.cfg.downloads.youtube && !cfg!(target_os = "ios"))
-                                .then_some(self.cfg.downloads.ytdlp_path.as_str()),
                             search_text: &self.search_text,
                             search_cache: &mut self.search_cache,
                             filter_text: &mut self.filter_text,

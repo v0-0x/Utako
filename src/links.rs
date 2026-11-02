@@ -1,5 +1,5 @@
-//! Recognises music links pasted into search: Spotify, SoundCloud and Apple Music
-//! artist / album / playlist / track URLs (and Spotify URIs).
+//! Recognises music links pasted into search: Spotify and SoundCloud artist / album /
+//! playlist / track URLs (and Spotify URIs).
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkKind {
@@ -18,11 +18,6 @@ pub enum Link {
     /// Any soundcloud.com page; resolved through SoundCloud's API.
     SoundCloud {
         url: String,
-    },
-    AppleMusic {
-        kind: LinkKind,
-        storefront: String,
-        id: String,
     },
     /// Short links (spotify.link, on.soundcloud.com) that redirect to one of the above.
     Short {
@@ -95,30 +90,6 @@ pub fn parse(input: &str) -> Option<Link> {
                 url: format!("https://soundcloud.com/{}", segments.join("/")),
             })
         }
-        "music.apple.com" | "itunes.apple.com" | "geo.music.apple.com" => {
-            // /{storefront}/{kind}/{slug}/{id} or /{storefront}/{kind}/{id}; ?i= points at a song in an album.
-            let storefront = segments.first()?.to_string();
-            let kind = match *segments.get(1)? {
-                "artist" => LinkKind::Artist,
-                "album" => LinkKind::Album,
-                "playlist" => LinkKind::Playlist,
-                "song" => LinkKind::Track,
-                _ => return None,
-            };
-            let id = segments.last()?.to_string();
-            if segments.len() < 3 {
-                return None;
-            }
-            let song_in_album = query_param(without_scheme, "i");
-            match (kind, song_in_album) {
-                (LinkKind::Album, Some(song)) => Some(Link::AppleMusic {
-                    kind: LinkKind::Track,
-                    storefront,
-                    id: song,
-                }),
-                _ => Some(Link::AppleMusic { kind, storefront, id }),
-            }
-        }
         _ => None,
     }
 }
@@ -137,19 +108,10 @@ fn valid_spotify_id(id: &str) -> bool {
     id.len() == 22 && id.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-fn query_param(url: &str, name: &str) -> Option<String> {
-    let query = url.split_once('?')?.1.split('#').next()?;
-    query.split('&').find_map(|pair| {
-        let (k, v) = pair.split_once('=')?;
-        (k == name && !v.is_empty()).then(|| v.to_string())
-    })
-}
-
 /// The page key used by the service for a parsed link (SoundCloud and short links resolve later).
 pub fn page_key(link: &Link) -> String {
     match link {
         Link::Spotify { kind, id } => format!("spotify:{}:{id}", kind_name(*kind)),
-        Link::AppleMusic { kind, storefront, id } => format!("applemusic:{}:{storefront}:{id}", kind_name(*kind)),
         Link::SoundCloud { url } | Link::Short { url } => url.clone(),
     }
 }
@@ -164,16 +126,11 @@ pub enum Target {
     Spotify(LinkKind, String),
     SoundCloudUser(u64),
     SoundCloudUrl(String),
-    AppleMusic {
-        kind: LinkKind,
-        storefront: String,
-        id: String,
-    },
     Short(String),
 }
 
-/// Page keys: `local:artist:<name>`, `spotify:<kind>:<id>`, `soundcloud:user:<id>`,
-/// `applemusic:<kind>:<storefront>:<id>`, or any link [`parse`] understands.
+/// Page keys: `local:artist:<name>`, `spotify:<kind>:<id>`, `soundcloud:user:<id>`, or any
+/// link [`parse`] understands.
 pub fn target(key: &str) -> Option<Target> {
     let key = key.trim();
     if let Some(name) = key.strip_prefix("local:artist:") {
@@ -185,34 +142,16 @@ pub fn target(key: &str) -> Option<Target> {
     if let Some(id) = key.strip_prefix("soundcloud:user:") {
         return id.parse().ok().map(Target::SoundCloudUser);
     }
-    if let Some(rest) = key.strip_prefix("applemusic:") {
-        let mut parts = rest.splitn(3, ':');
-        let kind = match parts.next()? {
-            "artist" => LinkKind::Artist,
-            "album" => LinkKind::Album,
-            "playlist" => LinkKind::Playlist,
-            "track" => LinkKind::Track,
-            _ => return None,
-        };
-        let storefront = parts.next().filter(|s| !s.is_empty())?.to_string();
-        let id = parts.next().filter(|s| !s.is_empty())?.to_string();
-        return Some(Target::AppleMusic { kind, storefront, id });
-    }
     Some(match parse(key)? {
         Link::Spotify { kind, id } => Target::Spotify(kind, id),
         Link::SoundCloud { url } => Target::SoundCloudUrl(url),
-        Link::AppleMusic { kind, storefront, id } => Target::AppleMusic { kind, storefront, id },
         Link::Short { url } => Target::Short(url),
     })
 }
 
 /// Finds the first music link in `text` (e.g. the page a short link redirects to).
 pub fn find_link(text: &str) -> Option<Link> {
-    const STARTS: &[&str] = &[
-        "https://open.spotify.com/",
-        "https://soundcloud.com/",
-        "https://music.apple.com/",
-    ];
+    const STARTS: &[&str] = &["https://open.spotify.com/", "https://soundcloud.com/"];
     STARTS
         .iter()
         .flat_map(|start| text.match_indices(start).map(|(i, _)| i))
@@ -234,13 +173,6 @@ pub fn web_url(key: &str) -> Option<String> {
     match target(key)? {
         Target::Spotify(kind, id) => Some(format!("https://open.spotify.com/{}/{id}", kind_name(kind))),
         Target::SoundCloudUrl(url) | Target::Short(url) => Some(url),
-        Target::AppleMusic { kind, storefront, id } => {
-            let kind = match kind {
-                LinkKind::Track => "song",
-                k => kind_name(k),
-            };
-            Some(format!("https://music.apple.com/{storefront}/{kind}/{id}"))
-        }
         Target::LocalArtist(_) | Target::ArtistName(_) | Target::SoundCloudUser(_) => None,
     }
 }
@@ -332,35 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn apple_music_links() {
-        assert_eq!(
-            parse("https://music.apple.com/us/artist/taylor-swift/159260351"),
-            Some(Link::AppleMusic {
-                kind: LinkKind::Artist,
-                storefront: "us".into(),
-                id: "159260351".into()
-            })
-        );
-        assert_eq!(
-            parse("https://music.apple.com/gb/album/1989/1440935467?i=1440935808"),
-            Some(Link::AppleMusic {
-                kind: LinkKind::Track,
-                storefront: "gb".into(),
-                id: "1440935808".into()
-            })
-        );
-        assert_eq!(
-            parse("https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb"),
-            Some(Link::AppleMusic {
-                kind: LinkKind::Playlist,
-                storefront: "us".into(),
-                id: "pl.f4d106fed2bd41149aaacabb233eb5eb".into()
-            })
-        );
-        assert_eq!(parse("https://music.apple.com/us/browse"), None);
-    }
-
-    #[test]
     fn page_targets() {
         let id = "0TnOYISbd1XYRBk9myaseg";
         assert_eq!(
@@ -384,16 +287,6 @@ mod tests {
         assert_eq!(target("artist:Bladee"), Some(Target::ArtistName("Bladee".into())));
         assert_eq!(target("artist:  "), None);
         assert_eq!(target("local:artist:"), None);
-        let apple = parse("https://music.apple.com/us/artist/taylor-swift/159260351").unwrap();
-        assert_eq!(
-            target(&page_key(&apple)),
-            Some(Target::AppleMusic {
-                kind: LinkKind::Artist,
-                storefront: "us".into(),
-                id: "159260351".into()
-            })
-        );
-        assert_eq!(target("applemusic:1440935808"), None);
         assert_eq!(
             target("https://spotify.link/AbCdEf"),
             Some(Target::Short("https://spotify.link/AbCdEf".into()))
@@ -402,10 +295,6 @@ mod tests {
         assert_eq!(
             web_url(&format!("spotify:album:{id}")).as_deref(),
             Some(format!("https://open.spotify.com/album/{id}").as_str())
-        );
-        assert_eq!(
-            web_url("applemusic:track:gb:1440935808").as_deref(),
-            Some("https://music.apple.com/gb/song/1440935808")
         );
         assert_eq!(web_url("soundcloud:user:1"), None);
     }

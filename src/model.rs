@@ -8,10 +8,7 @@ pub enum Source {
     Local,
     Spotify,
     SoundCloud,
-    /// Imported from Apple Music. Apple Music streams are DRM protected and can't be
-    /// played on Linux, so these are resolved to a local/Spotify/SoundCloud match at play time.
-    AppleMusic,
-    /// A YouTube video (music videos): plays through yt-dlp and mpv, with or without its picture.
+    /// A YouTube video (music videos): its sound plays in mpv, its picture in the app.
     YouTube,
     /// A song on the media server (v0-0x/mediaserver), streamed from it.
     Server,
@@ -23,7 +20,6 @@ impl Source {
             Source::Local => "local",
             Source::Spotify => "spotify",
             Source::SoundCloud => "soundcloud",
-            Source::AppleMusic => "applemusic",
             Source::YouTube => "youtube",
             Source::Server => "server",
         }
@@ -34,7 +30,6 @@ impl Source {
             "local" => Source::Local,
             "spotify" => Source::Spotify,
             "soundcloud" => Source::SoundCloud,
-            "applemusic" => Source::AppleMusic,
             "youtube" => Source::YouTube,
             "server" => Source::Server,
             _ => return None,
@@ -46,9 +41,16 @@ impl Source {
             Source::Local => "Local",
             Source::Spotify => "Spotify",
             Source::SoundCloud => "SoundCloud",
-            Source::AppleMusic => "Apple Music",
             Source::YouTube => "YouTube",
             Source::Server => "Media server",
+        }
+    }
+
+    /// The folder its downloads go in (in the download folder, and on the media server).
+    pub fn folder_name(self) -> &'static str {
+        match self {
+            Source::YouTube => "Music videos",
+            other => other.label(),
         }
     }
 }
@@ -57,8 +59,8 @@ impl Source {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     /// Globally unique key, prefixed by source:
-    /// `local:/music/a.flac`, `spotify:track:<base62>`, `soundcloud:<numeric id>`, `applemusic:<id>`,
-    /// `youtube:<video id>`.
+    /// `local:/music/a.flac`, `spotify:track:<base62>`, `soundcloud:<numeric id>`,
+    /// `youtube:<video id>`, `server:<server id>:<path>`.
     pub id: String,
     pub source: Source,
     pub title: String,
@@ -71,7 +73,7 @@ pub struct Track {
     pub art: Option<String>,
     /// Source specific playback locator:
     /// local file path, `spotify:track:<id>` URI, SoundCloud permalink URL, the YouTube video's
-    /// watch URL, or empty for Apple Music.
+    /// watch URL, or the song's path on the media server.
     pub uri: String,
     /// Unix seconds when this was added to the library/playlist (0 = unknown).
     pub added_at: i64,
@@ -100,10 +102,6 @@ impl Track {
 
     pub fn soundcloud_id(id: u64) -> String {
         format!("soundcloud:{id}")
-    }
-
-    pub fn applemusic_id(id: &str) -> String {
-        format!("applemusic:{id}")
     }
 
     pub fn youtube_id(video: &str) -> String {
@@ -196,7 +194,6 @@ pub enum PlaylistKind {
     SpotifyLiked,
     SoundCloud,
     SoundCloudLikes,
-    AppleMusic,
     /// Imported from an .m3u/.m3u8 file.
     M3u,
     /// A Spotify album saved to the library (shown with the albums, not the playlists).
@@ -214,7 +211,6 @@ impl PlaylistKind {
             PlaylistKind::SpotifyLiked => "spotify_liked",
             PlaylistKind::SoundCloud => "soundcloud",
             PlaylistKind::SoundCloudLikes => "soundcloud_likes",
-            PlaylistKind::AppleMusic => "applemusic",
             PlaylistKind::M3u => "m3u",
             PlaylistKind::SpotifyAlbum => "spotify_album",
             PlaylistKind::SoundCloudAlbum => "soundcloud_album",
@@ -229,7 +225,6 @@ impl PlaylistKind {
             "spotify_liked" => PlaylistKind::SpotifyLiked,
             "soundcloud" => PlaylistKind::SoundCloud,
             "soundcloud_likes" => PlaylistKind::SoundCloudLikes,
-            "applemusic" => PlaylistKind::AppleMusic,
             "m3u" => PlaylistKind::M3u,
             "spotify_album" => PlaylistKind::SpotifyAlbum,
             "soundcloud_album" => PlaylistKind::SoundCloudAlbum,
@@ -253,7 +248,6 @@ impl PlaylistKind {
             PlaylistKind::SoundCloud | PlaylistKind::SoundCloudLikes | PlaylistKind::SoundCloudAlbum => {
                 Some(Source::SoundCloud)
             }
-            PlaylistKind::AppleMusic => Some(Source::AppleMusic),
             _ => None,
         }
     }

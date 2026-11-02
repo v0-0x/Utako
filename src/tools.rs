@@ -1,5 +1,5 @@
-//! The helper programs Utako runs: mpv (local files and SoundCloud), yt-dlp and ffmpeg
-//! (downloads). The Windows installer and the macOS app ship them next to Utako; otherwise
+//! The helper programs Utako runs: mpv (the sound of everything but Spotify) and ffmpeg
+//! (music videos' pictures, and downloads). The Windows installer and the macOS app ship them next to Utako; otherwise
 //! they come from the PATH, and on macOS also from Homebrew's folders, which apps started from
 //! the Finder don't have on their PATH.
 
@@ -23,21 +23,6 @@ pub fn resolve(configured: &str, default_name: &str) -> String {
         .find(|p| p.is_file())
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| name.to_string())
-}
-
-/// Where program `name` is: a bundled (or Homebrew) copy first, then the PATH.
-pub fn find(name: &str) -> Option<PathBuf> {
-    if let Some(p) = candidates(name).into_iter().find(|p| p.is_file()) {
-        return Some(p);
-    }
-    let file = if cfg!(windows) && !name.to_ascii_lowercase().ends_with(".exe") {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    };
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(&file))
-        .find(|p| p.is_file())
 }
 
 /// Where a bundled (or Homebrew) copy of `name` may be.
@@ -79,19 +64,6 @@ pub fn install_hint(program: &str) -> String {
 /// The folder Utako's executable is in.
 pub fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe().ok()?.parent().map(Path::to_path_buf)
-}
-
-/// The folder of the ffmpeg shipped with Utako (or Homebrew's), for yt-dlp's
-/// `--ffmpeg-location`; `None` where ffmpeg simply comes from the PATH.
-pub fn bundled_ffmpeg_dir() -> Option<PathBuf> {
-    if !cfg!(any(windows, target_os = "macos")) {
-        return None;
-    }
-    let ffmpeg = PathBuf::from(resolve("ffmpeg", "ffmpeg"));
-    ffmpeg
-        .is_absolute()
-        .then(|| ffmpeg.parent().map(Path::to_path_buf))
-        .flatten()
 }
 
 /// A command for a helper program; on Windows it runs without flashing a console window.

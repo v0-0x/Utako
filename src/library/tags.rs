@@ -520,4 +520,62 @@ mod tests {
         assert_eq!(image_mime(b"GIF89a"), None);
         assert_eq!(image_mime(b"\x89PNG\r\n\x1a\n...."), Some(MimeType::Png));
     }
+
+    /// A saved music video (MP4 with a picture and sound) takes the song's details and cover
+    /// and still plays: both streams stay, and the library reads them back.
+    #[test]
+    fn tags_music_videos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("video.mp4");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=160x120:rate=10",
+                "-f",
+                "lavfi",
+            ])
+            .args([
+                "-i",
+                "sine=duration=1",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+            ])
+            .args(["-movflags", "+faststart"])
+            .arg(&path)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            eprintln!("no ffmpeg with libx264: skipped");
+            return;
+        }
+        let meta = Metadata {
+            title: "Houdini".into(),
+            artist: "Dua Lipa".into(),
+            album: "Houdini".into(),
+            ..Metadata::default()
+        };
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0\x1f\x15\xc4\x89";
+        write(&path, &meta, Some(png), false).unwrap();
+        let t = crate::library::scanner::read_track(&path, None, 0);
+        assert_eq!((t.title.as_str(), t.artist.as_str()), ("Houdini", "Dua Lipa"));
+        assert!((900..=1100).contains(&t.duration_ms), "{}", t.duration_ms);
+        let probe = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "stream=codec_name", "-of", "csv=p=0"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let streams = String::from_utf8_lossy(&probe.stdout);
+        assert!(streams.contains("h264") && streams.contains("aac"), "{streams}");
+    }
 }

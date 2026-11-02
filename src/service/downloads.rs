@@ -1,5 +1,5 @@
-//! Downloading songs from SoundCloud, Spotify and Apple Music, to this device or to the media
-//! server.
+//! Downloading songs from SoundCloud and Spotify, and music videos, to this device or to the
+//! media server.
 
 use super::*;
 
@@ -98,14 +98,8 @@ impl Service {
                 item.state = DownloadState::Running(0.0);
                 item.track.clone()
             };
-            // Apple Music songs already matched to Spotify get Spotify's details.
-            let spotify_twin = (track.source == Source::AppleMusic)
-                .then(|| self.cached_resolution(&track))
-                .flatten()
-                .filter(|t| t.source == Source::Spotify);
-            let wants_spotify = (track.source == Source::Spotify || spotify_twin.is_some())
-                && self.cfg.spotify.enabled
-                && self.spotify_auth.has_login();
+            let wants_spotify =
+                track.source == Source::Spotify && self.cfg.spotify.enabled && self.spotify_auth.has_login();
             let spotify = if wants_spotify { self.spotify_session() } else { None };
             // A song from the media server is saved here (it's on the server already).
             let to_server = self
@@ -126,11 +120,6 @@ impl Service {
                 http: self.http.clone(),
                 lyrics: d.lyrics.then(|| self.lyrics.clone()),
                 spotify,
-                spotify_twin,
-                // iOS can't run yt-dlp: Spotify and Apple Music songs come from SoundCloud there.
-                // A YouTube video is saved with yt-dlp whatever the setting.
-                ytdlp: ((d.youtube || track.source == Source::YouTube) && !cfg!(target_os = "ios"))
-                    .then(|| YtDlp::new(&d.ytdlp_path, &d.ytdlp_args).with_mp3(d.youtube_mp3)),
                 spotify_logged_in,
                 // iOS has no ffmpeg.
                 spotify_mp3: d.spotify_mp3 && !cfg!(target_os = "ios"),
@@ -278,8 +267,7 @@ impl Service {
         for track_id in &cancelled {
             if let Some((task, work)) = self.download_jobs.remove(track_id) {
                 task.abort();
-                // yt-dlp / ffmpeg are killed with the task; give them a moment to let go of
-                // the folder.
+                // ffmpeg is killed with the task; give it a moment to let go of the folder.
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     let _ = tokio::fs::remove_dir_all(&work).await;
@@ -324,7 +312,7 @@ impl Service {
 
     /// Clears work folders a crash or power cut left in the download folders.
     pub(super) fn clear_download_leftovers(&self) {
-        let mut dirs: Vec<PathBuf> = [Source::SoundCloud, Source::Spotify, Source::AppleMusic]
+        let mut dirs: Vec<PathBuf> = [Source::SoundCloud, Source::Spotify, Source::YouTube]
             .into_iter()
             .map(|s| self.cfg.download_dir(s))
             .chain([self.server_download_dir()])

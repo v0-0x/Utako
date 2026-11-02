@@ -351,24 +351,6 @@ pub fn download_button(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], size: f32) {
     }
 }
 
-/// Whether the yt-dlp `program` runs: its version, or why not. Asks the service the first time
-/// (and whenever the program changes); `None` until it has answered.
-pub fn ytdlp_status(ui: &Ui, cx: &mut Cx, program: &str) -> Option<Result<String, String>> {
-    let program = program.trim().to_string();
-    if let Some((checked, result)) = &cx.feed.ytdlp {
-        if *checked == program {
-            return Some(result.clone());
-        }
-    }
-    let id = Id::new("ytdlp-check");
-    let asked: Option<String> = ui.data(|d| d.get_temp(id));
-    if asked.as_deref() != Some(program.as_str()) {
-        ui.data_mut(|d| d.insert_temp(id, program.clone()));
-        cx.actions.push(Action::Cmd(Command::CheckYtDlp(program)));
-    }
-    None
-}
-
 /// Width [`pill`] will take for `text`.
 pub fn pill_width(ui: &Ui, text: &str) -> f32 {
     ui.painter()
@@ -1362,7 +1344,7 @@ pub fn song_link(t: &Track) -> String {
         Source::SoundCloud => t.uri.starts_with("http").then(|| t.uri.clone()),
         Source::Local => Some(t.uri.clone()),
         Source::YouTube => Some(t.uri.clone()),
-        Source::AppleMusic | Source::Server => None,
+        Source::Server => None,
     };
     link.unwrap_or_else(|| format!("{} - {}", t.artist, t.title))
 }
@@ -1765,13 +1747,6 @@ pub fn track_menu(ui: &mut Ui, cx: &mut Cx, t: &Track, in_playlist: Option<(Opti
                     .color(pal().text_faint),
             );
         }
-        Source::AppleMusic => {
-            ui.label(
-                egui::RichText::new("Plays via a local / Spotify / SoundCloud match")
-                    .small()
-                    .color(pal().text_faint),
-            );
-        }
     }
 }
 
@@ -1896,7 +1871,7 @@ mod tests {
         t.source = Source::Local;
         t.uri = "/music/a.flac".into();
         assert_eq!(song_link(&t), "/music/a.flac");
-        t.source = Source::AppleMusic;
+        t.source = Source::Server;
         assert_eq!(song_link(&t), "Artist - Song");
         // Every link a copy makes is understood by a paste.
         assert!(crate::links::target("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC").is_some());

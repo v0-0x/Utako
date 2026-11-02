@@ -61,6 +61,11 @@ fn migrate(conn: &Connection) -> Result<()> {
         "ALTER TABLE tracks ADD COLUMN album_artist TEXT NOT NULL DEFAULT '';
          ALTER TABLE tracks ADD COLUMN disc_no INTEGER;
          CREATE INDEX IF NOT EXISTS plays_track ON plays(track_id);",
+        // 2 (0.9.8): Apple Music is gone: its imported songs and playlists go with it.
+        "DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE kind = 'applemusic');
+         DELETE FROM playlists WHERE kind = 'applemusic';
+         DELETE FROM playlist_tracks WHERE track_id LIKE 'applemusic:%';
+         DELETE FROM tracks WHERE source = 'applemusic';",
     ];
     for (i, step) in steps.iter().enumerate().skip(version.max(0) as usize) {
         let tx = conn.unchecked_transaction()?;
@@ -100,11 +105,19 @@ impl Db {
         )?;
         let rows = stmt.query_map([], |r| {
             let source: String = r.get(1)?;
+            // A kind of song this version doesn't play any more is left out.
+            let Some(source) = Source::parse(&source) else {
+                return Err(rusqlite::Error::InvalidColumnType(
+                    1,
+                    source,
+                    rusqlite::types::Type::Text,
+                ));
+            };
             Ok(Track {
                 album_artist: r.get(10)?,
                 disc_no: r.get::<_, Option<i64>>(11)?.map(|n| n as u32),
                 id: r.get(0)?,
-                source: Source::parse(&source).unwrap_or(Source::Local),
+                source,
                 title: r.get(2)?,
                 artist: r.get(3)?,
                 album: r.get(4)?,
@@ -396,9 +409,43 @@ mod tests {
         let back = db.load_tracks().unwrap().into_iter().find(|x| x.id == t.id).unwrap();
         assert_eq!(back, t);
         let version: i64 = db.conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
         drop(db);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Apple Music songs and playlists from before 0.9.8 are removed; a playlist of your own
+    /// keeps its other songs.
+    #[test]
+    fn apple_music_imports_are_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("library.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(
+                "ALTER TABLE tracks ADD COLUMN album_artist TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE tracks ADD COLUMN disc_no INTEGER;
+                 PRAGMA user_version = 1;
+                 INSERT INTO tracks (id, source, title, artist, album, duration_ms, uri)
+                    VALUES ('local:/a', 'local', 'A', 'B', 'C', 1, '/a'),
+                           ('applemusic:1', 'applemusic', 'X', 'Y', 'Z', 1, '');
+                 INSERT INTO playlists (id, name, kind) VALUES
+                    ('applemusic:library', 'Apple Music Library', 'applemusic'),
+                    ('custom:1', 'Mine', 'custom');
+                 INSERT INTO playlist_tracks (playlist_id, pos, track_id) VALUES
+                    ('applemusic:library', 0, 'applemusic:1'),
+                    ('custom:1', 0, 'applemusic:1'),
+                    ('custom:1', 1, 'local:/a');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let tracks = db.load_tracks().unwrap();
+        assert_eq!(tracks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["local:/a"]);
+        let playlists = db.load_playlists().unwrap();
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(playlists[0].track_ids, ["local:/a"]);
     }
 
     #[test]

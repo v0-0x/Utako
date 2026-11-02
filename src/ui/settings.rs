@@ -48,7 +48,6 @@ enum Sec {
     Library,
     Spotify,
     SoundCloud,
-    AppleMusic,
     Lastfm,
     Discord,
     Lyrics,
@@ -90,12 +89,6 @@ impl Sec {
                 "Your SoundCloud likes and playlists",
                 "oauth token profile url sync likes",
             ),
-            Sec::AppleMusic => (
-                "Apple Music",
-                icon::APPLE_LOGO,
-                "Import your Apple Music library and playlists",
-                "itunes library xml m3u import storefront token",
-            ),
             Sec::Lastfm => (
                 "Last.fm",
                 icon::LASTFM_LOGO,
@@ -129,8 +122,8 @@ impl Sec {
             Sec::Downloads => (
                 "Downloads",
                 icon::DOWNLOAD_SIMPLE,
-                "Where downloads go, and how Spotify and Apple Music songs are saved",
-                "yt-dlp ytdlp youtube spotify mp3 opus ogg vorbis folder lyrics embed tags download media server",
+                "Where downloads go, and how Spotify songs and music videos are saved",
+                "youtube music videos spotify mp3 ogg vorbis folder lyrics embed tags download media server",
             ),
             Sec::Appearance => (
                 "Appearance",
@@ -176,14 +169,7 @@ const GROUPS: &[(&str, &[Sec])] = &[
     ("Library", &[Sec::Library]),
     (
         "Services",
-        &[
-            Sec::Spotify,
-            Sec::SoundCloud,
-            Sec::AppleMusic,
-            Sec::Lastfm,
-            Sec::Discord,
-            Sec::Lyrics,
-        ],
+        &[Sec::Spotify, Sec::SoundCloud, Sec::Lastfm, Sec::Discord, Sec::Lyrics],
     ),
     ("Playback", &[Sec::Playback, Sec::Audio, Sec::Downloads]),
     ("Look", &[Sec::Appearance]),
@@ -912,7 +898,6 @@ fn body(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut Sett
         Sec::Library => library(ui, pg, cx, cfg, st),
         Sec::Spotify => spotify(ui, pg, cx, cfg, st),
         Sec::SoundCloud => soundcloud(ui, pg, cx, cfg),
-        Sec::AppleMusic => apple_music(ui, pg, cx, cfg, st),
         Sec::Lastfm => lastfm(ui, pg, cx, cfg),
         Sec::Discord => {
             #[cfg(not(target_os = "ios"))]
@@ -1014,6 +999,32 @@ fn library(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
                 if ui.button(theme::ic(icon::ARROWS_CLOCKWISE, "Rescan")).clicked() {
                     cx.actions.push(Action::Cmd(Command::Rescan));
                 }
+            },
+        );
+    });
+    if ios {
+        return;
+    }
+    group(ui, pg, Head::Title("Playlist files", ""), |ui, pg| {
+        stack(
+            ui,
+            pg,
+            "Import an .m3u playlist",
+            "Its songs that are in your folders become a playlist of your own. Or drop the file onto the window.",
+            "import playlist m3u m3u8",
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut st.import_path)
+                            .hint_text("~/Downloads/Playlist.m3u")
+                            .desired_width(ui.available_width() - buttons_width(ui, ["Import".into()])),
+                    );
+                    if ui.button("Import").clicked() && !st.import_path.trim().is_empty() {
+                        let p = expand_home(&st.import_path);
+                        cx.actions.push(Action::Cmd(Command::ImportM3u(p)));
+                        st.import_path.clear();
+                    }
+                });
             },
         );
     });
@@ -1272,79 +1283,6 @@ fn soundcloud(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
     });
 }
 
-fn apple_music(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut SettingsState) {
-    group(
-        ui,
-        pg,
-        Head::Title(
-            "Import a file",
-            "Apple Music streams are DRM-protected and can't play on Linux. Utako imports your library and \
-             playlists, then plays each song from your local files, Spotify or SoundCloud.",
-        ),
-        |ui, pg| {
-            stack(
-                ui,
-                pg,
-                "A Library.xml or .m3u file",
-                "Music app on macOS / iTunes on Windows: File → Library → Export Library…",
-                "import playlist",
-                |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut st.import_path)
-                                .hint_text("~/Downloads/Library.xml")
-                                .desired_width(ui.available_width() - buttons_width(ui, ["Import".into()])),
-                        );
-                        if ui.button("Import").clicked() && !st.import_path.trim().is_empty() {
-                            let p = expand_home(&st.import_path);
-                            let lower = p.to_string_lossy().to_lowercase();
-                            if lower.ends_with(".m3u") || lower.ends_with(".m3u8") {
-                                cx.actions.push(Action::Cmd(Command::ImportM3u(p)));
-                            } else {
-                                cx.actions.push(Action::Cmd(Command::ImportAppleXml(p)));
-                            }
-                            st.import_path.clear();
-                        }
-                    });
-                },
-            );
-        },
-    );
-    group(ui, pg, Head::Fold("Import with the Apple Music API"), |ui, pg| {
-        field(
-            ui,
-            pg,
-            "Media user token",
-            "The media-user-token cookie from music.apple.com.",
-            &mut cfg.apple_music.user_token,
-            "media-user-token",
-            true,
-        );
-        field(
-            ui,
-            pg,
-            "Developer token",
-            "Optional: fetched automatically when empty.",
-            &mut cfg.apple_music.developer_token,
-            "",
-            true,
-        );
-        field(ui, pg, "Storefront", "", &mut cfg.apple_music.storefront, "us", false);
-        row(
-            ui,
-            pg,
-            "Library and playlists",
-            "Import them with the API now.",
-            "import",
-            |ui| {
-                if ui.button(theme::ic(icon::ARROWS_CLOCKWISE, "Import")).clicked() {
-                    cx.actions.push(Action::Cmd(Command::ImportAppleApi));
-                }
-            },
-        );
-    });
-}
-
 fn lastfm(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
     group(ui, pg, Head::None, |ui, pg| {
         let (text, color) = status(&cx.feed.lastfm);
@@ -1488,7 +1426,7 @@ fn playback(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
                 "Open music videos in the player when they start",
                 "The video plays in the middle of the window; its back arrow returns to your page while the \
                  song plays on, and the screen button in the player brings it back. Off, music videos start \
-                 like songs. Needs yt-dlp and ffmpeg (they come with Utako on Windows and macOS).",
+                 like songs. Needs ffmpeg (it comes with Utako on Windows and macOS).",
                 &mut cfg.playback.youtube_video,
             );
         }
@@ -1589,7 +1527,7 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             ui,
             pg,
             "Download folder",
-            "Empty: a SoundCloud, Spotify or Apple Music folder inside your first library folder, so \
+            "Empty: a SoundCloud, Spotify or Music videos folder inside your first library folder, so \
              downloads show up in Local Files too.",
             "browse",
             |ui| {
@@ -1642,75 +1580,18 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
         }
     });
     spotify_downloads(ui, pg, cfg);
-    let (title, help) = if cfg!(target_os = "ios") {
-        (
-            "Apple Music songs",
-            "Their audio is DRM-protected, so Utako downloads the same recording from SoundCloud, then tags \
-             it with the song's details from Spotify when it has the song. Spotify songs are found this way \
-             too while you aren't logged in to Spotify.",
-        )
-    } else {
-        (
-            "Apple Music songs",
-            "Their audio is DRM-protected, so Utako downloads the same recording from YouTube (with yt-dlp) \
-             or SoundCloud, then tags it with the song's details from Spotify when it has the song. Spotify \
-             songs are found this way too while you aren't logged in to Spotify.",
-        )
-    };
-    group(ui, pg, Head::Title(title, help), |ui, pg| {
-        if cfg!(target_os = "ios") {
-            return;
-        }
-        toggle(
-            ui,
-            pg,
-            "Find Apple Music songs on YouTube",
-            "",
-            &mut cfg.downloads.youtube,
-        );
-        if !cfg.downloads.youtube {
-            return;
-        }
-        let state = widgets::ytdlp_status(ui, cx, &cfg.downloads.ytdlp_path);
-        let (text, color) = match &state {
-            Some(Ok(version)) => (format!("yt-dlp {version} is ready"), GREEN),
-            Some(Err(why)) => (
-                format!("yt-dlp {why}. {}", crate::tools::install_hint("yt-dlp")),
-                DANGER,
-            ),
-            None => ("Checking yt-dlp…".to_string(), pal().text_faint),
-        };
-        row_with(ui, pg, "yt-dlp program", Some((&text, color)), "", "ytdlp", |ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut cfg.downloads.ytdlp_path)
-                    .hint_text("yt-dlp")
-                    .desired_width(FIELD_W - 60.0),
+    if !cfg!(target_os = "ios") {
+        group(ui, pg, Head::Title("Music videos", ""), |ui, pg| {
+            note(
+                ui,
+                pg,
+                "Saved as video files with their picture and sound (up to 1080p, MP4 when YouTube has it), in a \
+                 Music videos folder (on the media server too, when downloads go there). They play in the player \
+                 like any music video.",
+                "music videos youtube download video mp4",
             );
-            if matches!(state, Some(Err(_))) && ui.small_button("Check again").clicked() {
-                let program = cfg.downloads.ytdlp_path.trim().to_string();
-                cx.actions.push(Action::Cmd(Command::CheckYtDlp(program)));
-            }
         });
-        field(
-            ui,
-            pg,
-            "Extra yt-dlp options",
-            "If YouTube asks yt-dlp to confirm you're not a bot, --cookies-from-browser firefox (or \
-                 chrome) lets it use your browser's YouTube login. With a YouTube Music Premium login that \
-                 way, downloads get YouTube's 256 kbps AAC instead of ~160 kbps Opus.",
-            &mut cfg.downloads.ytdlp_args,
-            "--cookies-from-browser firefox",
-            false,
-        );
-        toggle(
-            ui,
-            pg,
-            "Save YouTube downloads as MP3 instead of Opus",
-            "Opus at ~160 kbps already sounds like a high-bitrate MP3; converting can't add quality, \
-                 but MP3 plays on every device and player.",
-            &mut cfg.downloads.youtube_mp3,
-        );
-    });
+    }
 }
 
 /// Spotify songs, saved straight from Spotify.
@@ -1722,8 +1603,8 @@ fn spotify_downloads(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
             "Spotify songs",
             "Saved straight from Spotify through your Spotify login here: the same Ogg Vorbis file Utako \
              plays, 320 kbps with Premium. Then tagged with the song's details from Spotify: album, artists, \
-             track and disc number, release date, ISRC, label, copyright and full-size cover. Apple Music \
-             songs Utako has matched to Spotify are saved this way too.",
+             track and disc number, release date, ISRC, label, copyright and full-size cover. While you \
+             aren't logged in to Spotify, the same recording is saved from SoundCloud instead.",
         ),
         |ui, pg| {
             if cfg!(target_os = "ios") {
@@ -2111,10 +1992,10 @@ fn backup(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, st: &mut SettingsState) {
         ),
         |ui, pg| {
             let keys_help = if st.export_keys {
-                "Spotify, Last.fm, SoundCloud, Apple Music, Discord. The file then holds your passwords and \
-                 tokens: keep it private."
+                "Spotify, Last.fm, SoundCloud, Discord. The file then holds your passwords and tokens: keep \
+                 it private."
             } else {
-                "Spotify, Last.fm, SoundCloud, Apple Music, Discord."
+                "Spotify, Last.fm, SoundCloud, Discord."
             };
             toggle(ui, pg, "Include keys and logins", keys_help, &mut st.export_keys);
             let mut playlists = !st.export_no_playlists;
@@ -2235,7 +2116,7 @@ mod tests {
         let q = words("Port");
         assert!(matches(&q, &["Login redirect port"]));
         assert!(!matches(&q, &["Import"]));
-        assert!(matches(&words("yt dl"), &["yt-dlp program"]));
+        assert!(matches(&words("m3u"), &["Import an .m3u playlist"]));
         assert!(!matches(&words("spotify gapless"), &["Spotify"]));
     }
 
@@ -2246,6 +2127,6 @@ mod tests {
             assert!(!listed[i + 1..].contains(s), "{s:?} is listed twice");
             assert!(!s.info().label.is_empty() && !s.info().description.is_empty());
         }
-        assert_eq!(listed.len(), 14);
+        assert_eq!(listed.len(), 13);
     }
 }

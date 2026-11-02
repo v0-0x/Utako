@@ -31,8 +31,6 @@ pub enum MpvEvent {
     },
     Pause(bool),
     Duration(f64),
-    /// Why a `ytdl://` link didn't open: yt-dlp's own error ("Sign in to confirm your age").
-    Problem(String),
     /// The mpv process exited or the socket closed.
     Died,
 }
@@ -46,8 +44,6 @@ pub struct MpvOptions {
     pub audio_device: String,
     /// Exclusive device access (bit-perfect with ALSA hw devices).
     pub exclusive: bool,
-    /// The yt-dlp mpv's own YouTube support runs, for `ytdl://` links (music videos).
-    pub ytdl: String,
 }
 
 /// ReplayGain 2.0 tags level songs to -18 LUFS, Spotify's "Normalize volume" to about
@@ -108,11 +104,8 @@ impl Mpv {
             .arg("--video=no")
             .arg("--audio-display=no")
             .arg("--no-terminal")
-            // mpv's own YouTube support (its ytdl hook), for music videos: only `ytdl://` links
-            // go to yt-dlp; any other link that fails (a SoundCloud stream) isn't tried there.
-            .arg("--ytdl=yes")
-            .arg(format!("--script-opts-append=ytdl_hook-ytdl_path={}", opts.ytdl))
-            .arg("--script-opts-append=ytdl_hook-exclude=.")
+            // Links are opened as they are (music videos' streams come from YouTube's own API).
+            .arg("--ytdl=no")
             .arg("--keep-open=no")
             .arg("--prefetch-playlist=yes")
             .arg("--audio-client-name=Utako")
@@ -220,8 +213,6 @@ impl Mpv {
         };
         mpv.command(json!(["observe_property", 1, "pause"])).await?;
         mpv.command(json!(["observe_property", 2, "duration"])).await?;
-        // Errors only: what yt-dlp says when a music video doesn't open.
-        mpv.command(json!(["request_log_messages", "error"])).await?;
         Ok(mpv)
     }
 
@@ -252,9 +243,9 @@ impl Mpv {
         }
     }
 
-    /// Replaces the playlist with `url` and starts playing at `start` seconds.
-    /// Plays `url` from `start` seconds, with options that hold only while this file plays (a YouTube
-    /// video's picture and window, say): mpv sets them back when the next file starts.
+    /// Replaces the playlist with `url` and plays it from `start` seconds, with options that hold
+    /// only while this file plays (the User-Agent a stream was made for, say): mpv sets them back
+    /// when the next file starts.
     pub async fn load_with(&self, url: &str, start: f64, extra: &[(&str, String)]) -> Result<()> {
         let mut opts = Vec::new();
         if start > 0.5 {
@@ -557,10 +548,6 @@ fn parse_event(msg: &Value) -> Option<MpvEvent> {
             error: msg.get("file_error").and_then(Value::as_str).map(str::to_string),
             playlist_entry_id: msg.get("playlist_entry_id").and_then(Value::as_i64).unwrap_or(0),
         }),
-        "log-message" if msg.get("prefix").and_then(Value::as_str) == Some("ytdl_hook") => {
-            let text = msg.get("text")?.as_str()?.trim();
-            text.starts_with("ERROR:").then(|| MpvEvent::Problem(text.to_string()))
-        }
         "property-change" => match msg.get("name")?.as_str()? {
             "pause" => Some(MpvEvent::Pause(msg.get("data")?.as_bool()?)),
             "duration" => Some(MpvEvent::Duration(msg.get("data")?.as_f64()?)),
@@ -604,23 +591,6 @@ mod tests {
             Some(MpvEvent::Duration(201.5))
         );
         assert_eq!(ev(r#"{"event":"property-change","id":2,"name":"duration"}"#), None);
-        // yt-dlp's error, as mpv's YouTube support logs it; its other messages aren't events.
-        assert_eq!(
-            ev(
-                r#"{"event":"log-message","prefix":"ytdl_hook","level":"error","text":"ERROR: [youtube] x: Private video\n"}"#
-            ),
-            Some(MpvEvent::Problem("ERROR: [youtube] x: Private video".into()))
-        );
-        assert_eq!(
-            ev(
-                r#"{"event":"log-message","prefix":"ytdl_hook","level":"error","text":"youtube-dl failed: unexpected error occurred"}"#
-            ),
-            None
-        );
-        assert_eq!(
-            ev(r#"{"event":"log-message","prefix":"ffmpeg","level":"error","text":"ERROR: x"}"#),
-            None
-        );
         assert_eq!(
             ev(r#"{"event":"start-file","playlist_entry_id":3}"#),
             Some(MpvEvent::StartFile { playlist_entry_id: 3 })
@@ -667,7 +637,6 @@ mod tests {
             gapless: true,
             audio_device: String::new(),
             exclusive: false,
-            ytdl: "yt-dlp".into(),
         };
         let a = Mpv::spawn(&opts, 7, tx.clone()).await.unwrap();
         let b = Mpv::spawn(&opts, 8, tx).await.unwrap();
@@ -745,7 +714,6 @@ mod tests {
             gapless: true,
             audio_device: String::new(),
             exclusive: false,
-            ytdl: "yt-dlp".into(),
         };
         let mut peaks = Vec::new();
         for levelling in [true, false] {

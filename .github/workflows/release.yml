@@ -1,5 +1,5 @@
 # Builds the Windows installer and the macOS apps (Apple Silicon and Intel) with everything
-# they need (mpv, yt-dlp, ffmpeg, the Inter font) and the Arch Linux package, and publishes them
+# they need (mpv, ffmpeg, the Inter font) and the Arch Linux package, and publishes them
 # as the GitHub release of the version in Cargo.toml. The apps' updater installs new releases
 # from there.
 #
@@ -129,7 +129,7 @@ jobs:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --locked --no-default-features
 
-      - name: Fetch mpv, yt-dlp, Deno, ffmpeg, Inter and rcedit
+      - name: Fetch mpv, ffmpeg, Inter and rcedit
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -155,21 +155,6 @@ jobs:
           7z x dl\mpv.7z -odl\mpv -y | Out-Null
           Copy-Item dl\mpv\mpv.exe stage\tools\
           Get-ChildItem dl\mpv -Filter *.dll | Copy-Item -Destination stage\tools\
-
-          Invoke-WebRequest https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe -OutFile stage\tools\yt-dlp.exe
-          Invoke-WebRequest https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS -OutFile dl\yt-dlp.sums
-          $line = Get-Content dl\yt-dlp.sums | Where-Object { $_ -match '\s+yt-dlp\.exe$' } | Select-Object -First 1
-          if (-not $line) { throw "yt-dlp has no checksum for yt-dlp.exe" }
-          Assert-Hash stage\tools\yt-dlp.exe ($line -split '\s+')[0]
-
-          # Deno: yt-dlp runs YouTube's JavaScript in it to unlock the video links.
-          Invoke-WebRequest https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip -OutFile dl\deno.zip
-          Invoke-WebRequest https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip.sha256sum -OutFile dl\deno.sums
-          # Its checksum file is PowerShell's Get-FileHash table: the hash is the 64-digit word.
-          if ((Get-Content dl\deno.sums -Raw) -notmatch '\b([0-9A-Fa-f]{64})\b') { throw "Deno has no checksum" }
-          Assert-Hash dl\deno.zip $Matches[1].ToLower()
-          Expand-Archive dl\deno.zip dl\deno
-          Copy-Item dl\deno\deno.exe stage\tools\
 
           # ffmpeg and ffprobe (LGPL, sharing their DLLs).
           Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip -OutFile dl\ffmpeg.zip
@@ -214,10 +199,8 @@ jobs:
           $mpv.WaitForExit(5000) | Out-Null
           stage\tools\ffmpeg.exe -hide_banner -version | Select-Object -First 1
           if ($LASTEXITCODE -ne 0) { throw "ffmpeg doesn't run" }
-          stage\tools\yt-dlp.exe --version
-          if ($LASTEXITCODE -ne 0) { throw "yt-dlp doesn't run" }
-          stage\tools\deno.exe --version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw "deno doesn't run" }
+          stage\tools\ffprobe.exe -hide_banner -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) { throw "ffprobe doesn't run" }
 
       - name: Stage the app
         shell: pwsh
@@ -323,7 +306,7 @@ jobs:
       - name: Build
         run: cargo build --release --locked --no-default-features --target ${{ matrix.target }}
 
-      - name: Fetch mpv, yt-dlp, Deno, ffmpeg and Inter
+      - name: Fetch mpv, ffmpeg and Inter
         run: |
           set -euo pipefail
           mkdir -p dl tools fonts
@@ -347,14 +330,6 @@ jobs:
           # Downloads of a fixed version must be exactly the file that was checked.
           check() { echo "$2  $1" | shasum -a 256 -c -; }
 
-          curl -fsSL -o tools/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos
-          curl -fsSL -o dl/yt-dlp.sums https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS
-          check tools/yt-dlp "$(awk '$2 == "yt-dlp_macos" { print $1 }' dl/yt-dlp.sums)"
-          # Deno: yt-dlp runs YouTube's JavaScript in it to unlock the video links.
-          curl -fsSL -o dl/deno.zip "https://github.com/denoland/deno/releases/latest/download/deno-${{ matrix.target }}.zip"
-          curl -fsSL -o dl/deno.sums "https://github.com/denoland/deno/releases/latest/download/deno-${{ matrix.target }}.zip.sha256sum"
-          check dl/deno.zip "$(grep -oE '[0-9a-fA-F]{64}' dl/deno.sums | head -1 | tr 'A-F' 'a-f')"
-          unzip -q -o dl/deno.zip deno -d tools
           ff=$([ "${{ matrix.arch }}" = arm64 ] && echo arm64 || echo x64)
           for t in ffmpeg ffprobe; do
             case "$t-$ff" in
@@ -402,8 +377,7 @@ jobs:
           app=dist/Utako.app
           "$app/Contents/Resources/mpv.app/Contents/MacOS/mpv" --no-config --version | head -1
           "$app/Contents/Resources/tools/ffmpeg" -hide_banner -version | head -1
-          "$app/Contents/Resources/tools/yt-dlp" --version
-          "$app/Contents/Resources/tools/deno" --version | head -1
+          "$app/Contents/Resources/tools/ffprobe" -hide_banner -version | head -1
           "$app/Contents/MacOS/multimusic" > run.log 2>&1 &
           pid=$!
           sleep 12
@@ -529,7 +503,7 @@ jobs:
           cat > ../install.md <<EOF
           ## Install
 
-          - **Windows 10/11:** run \`Utako-Setup-$VERSION-x64.exe\`. It installs for your user (no administrator prompt) with everything Utako needs (mpv, yt-dlp, ffmpeg).
+          - **Windows 10/11:** run \`Utako-Setup-$VERSION-x64.exe\`. It installs for your user (no administrator prompt) with everything Utako needs (mpv, ffmpeg).
           - **macOS 11+:** open the \`.dmg\` for your Mac (**arm64** for Apple Silicon M1/M2/M3/M4, **intel** for Intel Macs) and drag Utako to Applications. The app isn't notarized by Apple, so the first time: right-click Utako → Open → Open (or System Settings → Privacy & Security → Open Anyway).
           - **Arch Linux (x86_64):** \`sudo pacman -U multimusic-*-x86_64.pkg.tar.zst\`, or build from the repository with \`makepkg -si\`.
           - **iPhone and iPad (iOS 15+):** install \`Utako-$VERSION-ios.ipa\` with Sideloadly or AltStore (signed with your Apple ID; a free one needs signing again every 7 days) or TrollStore. Put music in the Files app under On My iPhone › Utako.

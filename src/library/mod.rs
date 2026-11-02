@@ -101,6 +101,10 @@ impl Library {
         self.local_match.clear();
         for t in &local {
             self.local_match.entry(t.match_key()).or_insert_with(|| t.id.clone());
+            // A song on no album (a music video) isn't an album of its own.
+            if t.album.trim().is_empty() {
+                continue;
+            }
             // By album artist: a compilation or an album with guests stays one album.
             let key = format!("{}\u{1f}{}", sort_key(&t.album), sort_key(t.album_by()));
             let idx = *album_index.entry(key.clone()).or_insert_with(|| {
@@ -236,9 +240,8 @@ impl Library {
                 PlaylistKind::Spotify => 4,
                 PlaylistKind::SoundCloudLikes => 5,
                 PlaylistKind::SoundCloud => 6,
-                PlaylistKind::AppleMusic => 7,
-                PlaylistKind::SpotifyAlbum => 8,
-                PlaylistKind::SoundCloudAlbum => 9,
+                PlaylistKind::SpotifyAlbum => 7,
+                PlaylistKind::SoundCloudAlbum => 8,
             }
         }
         // Stable: keeps service order (e.g. Spotify's own playlist order) within a kind.

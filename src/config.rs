@@ -17,7 +17,6 @@ pub struct Config {
     pub playback: PlaybackConfig,
     pub spotify: SpotifyConfig,
     pub soundcloud: SoundCloudConfig,
-    pub apple_music: AppleMusicConfig,
     pub lastfm: LastfmConfig,
     pub discord: DiscordConfig,
     pub lyrics: LyricsConfig,
@@ -71,7 +70,6 @@ impl Default for Config {
             playback: PlaybackConfig::default(),
             spotify: SpotifyConfig::default(),
             soundcloud: SoundCloudConfig::default(),
-            apple_music: AppleMusicConfig::default(),
             lastfm: LastfmConfig::default(),
             discord: DiscordConfig::default(),
             lyrics: LyricsConfig::default(),
@@ -225,17 +223,9 @@ impl Default for SoundCloudConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct DownloadsConfig {
-    /// Where downloads go. Empty = "SoundCloud", "Spotify" and "Apple Music" folders in the
+    /// Where downloads go. Empty = "SoundCloud", "Spotify" and "Music videos" folders in the
     /// first library folder.
     pub folder: String,
-    /// Look for Apple Music songs (and Spotify songs while not logged in to Spotify) on YouTube
-    /// (needs yt-dlp) before SoundCloud.
-    pub youtube: bool,
-    pub ytdlp_path: String,
-    /// Extra yt-dlp options, e.g. `--cookies-from-browser firefox` for YouTube's bot check.
-    pub ytdlp_args: String,
-    /// Save YouTube downloads as MP3 instead of YouTube's own Opus / AAC.
-    pub youtube_mp3: bool,
     /// Save Spotify downloads as MP3 instead of Spotify's own Ogg Vorbis.
     pub spotify_mp3: bool,
     /// Send downloads to the media server while it's connected (and lets this device upload),
@@ -249,26 +239,11 @@ impl Default for DownloadsConfig {
     fn default() -> Self {
         DownloadsConfig {
             folder: String::new(),
-            youtube: true,
-            ytdlp_path: "yt-dlp".into(),
-            ytdlp_args: String::new(),
-            youtube_mp3: false,
             spotify_mp3: false,
             to_server: false,
             lyrics: true,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
-pub struct AppleMusicConfig {
-    /// Developer token (JWT) from music.apple.com. Optional, only needed for API import.
-    pub developer_token: String,
-    /// `media-user-token` cookie from music.apple.com.
-    pub user_token: String,
-    /// Storefront country code, e.g. `us`.
-    pub storefront: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -561,7 +536,7 @@ impl Config {
         if !custom.is_empty() {
             return expand_home(custom);
         }
-        self.library_root().join(source.label())
+        self.library_root().join(source.folder_name())
     }
 
     /// The first library folder, where downloads go by default (so they join the library).
@@ -698,6 +673,7 @@ mod tests {
         cfg.library.folders = vec![PathBuf::from("/music"), PathBuf::from("/more")];
         assert_eq!(cfg.download_dir(Source::SoundCloud), PathBuf::from("/music/SoundCloud"));
         assert_eq!(cfg.download_dir(Source::Spotify), PathBuf::from("/music/Spotify"));
+        assert_eq!(cfg.download_dir(Source::YouTube), PathBuf::from("/music/Music videos"));
         cfg.downloads.folder = " /data/dl ".into();
         assert_eq!(cfg.download_dir(Source::Spotify), PathBuf::from("/data/dl"));
         cfg.downloads.folder = "~/dl".into();

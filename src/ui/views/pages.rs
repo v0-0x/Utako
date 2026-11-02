@@ -6,12 +6,11 @@ pub(super) fn service_name(source: Option<Source>) -> &'static str {
     match source {
         Some(Source::Spotify) => "Spotify",
         Some(Source::SoundCloud) => "SoundCloud",
-        Some(Source::AppleMusic) => "Apple Music",
         _ => "the web",
     }
 }
 
-/// An artist / album / playlist / song from Spotify, SoundCloud or Apple Music.
+/// An artist / album / playlist / song from Spotify or SoundCloud.
 pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &str) {
     let p = &cx.feed.page;
     if p.key != key || p.loading {
@@ -22,7 +21,6 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
             let what = match links::target(key) {
                 Some(links::Target::Spotify(..)) => "Loading from Spotify…",
                 Some(links::Target::SoundCloudUser(_) | links::Target::SoundCloudUrl(_)) => "Loading from SoundCloud…",
-                Some(links::Target::AppleMusic { .. }) => "Loading from Apple Music…",
                 Some(links::Target::ArtistName(_)) => "Looking on Spotify and SoundCloud…",
                 _ => "Opening link…",
             };
@@ -169,14 +167,6 @@ pub(super) fn remote_page(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &st
         let tracks = filter(all, st.filter_text);
         if play || shuffle {
             play_list(cx, &tracks, shuffle, &p.title);
-        }
-        if p.source == Some(Source::AppleMusic) {
-            ui.label(
-                egui::RichText::new("Apple Music songs play from your local files, Spotify or SoundCloud")
-                    .small()
-                    .color(pal().text_faint),
-            );
-            ui.add_space(4.0);
         }
         if no_matches(ui, tracks.len(), st.filter_text) {
             return;
@@ -656,13 +646,10 @@ pub(super) fn link_card(ui: &mut Ui, cx: &mut Cx, link: &links::Link) {
     let (glyph, service) = match link {
         links::Link::Spotify { .. } => (icon::SPOTIFY_LOGO, Some(Source::Spotify)),
         links::Link::SoundCloud { .. } => (icon::SOUNDCLOUD_LOGO, Some(Source::SoundCloud)),
-        links::Link::AppleMusic { .. } => (icon::APPLE_LOGO, Some(Source::AppleMusic)),
         links::Link::Short { .. } => (icon::LINK, None),
     };
     let what = match link {
-        links::Link::Spotify { kind, .. } | links::Link::AppleMusic { kind, .. } => {
-            links::kind_label(*kind).to_lowercase()
-        }
+        links::Link::Spotify { kind, .. } => links::kind_label(*kind).to_lowercase(),
         links::Link::SoundCloud { .. } => "profile, track or playlist".into(),
         links::Link::Short { .. } => "short link".into(),
     };
@@ -732,9 +719,9 @@ pub(super) fn browse(ui: &mut Ui, cx: &mut Cx) {
             "Tracks, artists, albums and playlists, no account needed",
         ),
         (
-            Source::AppleMusic,
-            "Apple Music",
-            "Paste an Apple Music link to open an artist, album or playlist",
+            Source::YouTube,
+            "Music videos",
+            "Search for a song to find its music video, and watch it here",
         ),
     ];
     widgets::grid(ui, sources.len(), 200.0, |ui, i, w| {
@@ -775,8 +762,8 @@ pub(super) fn browse(ui: &mut Ui, cx: &mut Cx) {
         );
         ui.label(
             egui::RichText::new(
-                "Tip: paste a Spotify, SoundCloud or Apple Music link (artist, album, playlist or song) \
-                 into the search bar to open it.",
+                "Tip: paste a Spotify or SoundCloud link (artist, album, playlist or song) into the \
+                 search bar to open it.",
             )
             .color(pal().text_dim),
         );

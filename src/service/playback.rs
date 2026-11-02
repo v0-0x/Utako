@@ -51,7 +51,6 @@ impl Service {
         // What the last song was (its format, its picture, why it failed) isn't this one's.
         self.quality = None;
         self.video = None;
-        self.ytdl_problem = None;
         self.duration = track.duration_secs();
         self.set_position(start);
         self.status = PlayStatus::Loading;
@@ -97,34 +96,6 @@ impl Service {
             Source::Spotify => self.start_spotify(track, start).await,
             Source::YouTube => self.start_youtube(track, seq).await,
             Source::Server => self.start_server_track(track).await,
-            Source::AppleMusic => {
-                if let Some(t) = self.cached_resolution(&track) {
-                    Box::pin(self.dispatch_resolved(track, Some(t), start)).await;
-                    return;
-                }
-                let local = self
-                    .shared
-                    .library
-                    .read()
-                    .unwrap()
-                    .local_match(&track.artist, &track.title)
-                    .cloned();
-                if local.is_some() {
-                    Box::pin(self.dispatch_resolved(track, local, start)).await;
-                    return;
-                }
-                self.silence_engine().await;
-                let tx = self.internal_tx.clone();
-                let resolver = self.resolver();
-                tokio::spawn(async move {
-                    let resolved = resolver.resolve(&track).await;
-                    let _ = tx.send(Internal::Resolved {
-                        seq,
-                        original: track,
-                        resolved,
-                    });
-                });
-            }
         }
     }
 
@@ -147,32 +118,6 @@ impl Service {
         }
         self.engine = Engine::None;
         self.mpv_preloaded = None;
-    }
-
-    pub(super) async fn dispatch_resolved(&mut self, original: Track, resolved: Option<Track>, start: f64) {
-        match resolved {
-            Some(t) if t.source != Source::AppleMusic => {
-                let _ = self.db.set_kv(
-                    &format!("resolve:{}", original.id),
-                    &serde_json::to_string(&t).unwrap_or_default(),
-                );
-                {
-                    let mut pv = self.shared.player.write().unwrap();
-                    pv.via = Some(t.clone());
-                }
-                self.dispatch(t, start).await;
-            }
-            _ => {
-                let msg = format!("No playable match for “{} – {}”", original.artist, original.title);
-                self.load_failed(msg).await;
-            }
-        }
-    }
-
-    pub(super) fn cached_resolution(&self, track: &Track) -> Option<Track> {
-        self.db
-            .get_kv(&format!("resolve:{}", track.id))
-            .and_then(|s| serde_json::from_str(&s).ok())
     }
 
     /// Login used for Web API calls: the user's own app if authorized, else the main login.
@@ -225,7 +170,6 @@ impl Service {
             gapless: self.cfg.playback.gapless,
             audio_device: self.cfg.playback.audio_device.clone(),
             exclusive: self.cfg.playback.bit_perfect,
-            ytdl: crate::tools::resolve(&self.cfg.downloads.ytdlp_path, "yt-dlp"),
         };
         let id = self.mpv_next_id;
         self.mpv_next_id += 1;
@@ -233,12 +177,11 @@ impl Service {
         Ok(())
     }
 
-    /// A YouTube music video: yt-dlp finds its streams (with the picture when that is on), then
-    /// mpv plays them.
+    /// A YouTube music video: its streams are looked up on YouTube, then mpv plays the sound and
+    /// the centre panel the picture.
     pub(super) async fn start_youtube(&mut self, track: Track, seq: u64) {
         if cfg!(target_os = "ios") {
-            self.load_failed("YouTube videos need yt-dlp, which can't run on iOS".into())
-                .await;
+            self.load_failed("Music videos don't play on iPhone yet".into()).await;
             return;
         }
         let Some(id) = youtube::video_id(&track.id).map(str::to_owned) else {
@@ -246,37 +189,33 @@ impl Service {
             return;
         };
         self.silence_engine().await;
-        let ytdlp = YtDlp::new(&self.cfg.downloads.ytdlp_path, &self.cfg.downloads.ytdlp_args);
+        let http = self.http.clone();
         let tx = self.internal_tx.clone();
+        let shared = self.shared.clone();
         tokio::spawn(async move {
-            // The sound: mpv opens the video with its own YouTube support, which runs yt-dlp and
-            // knows every kind of stream YouTube gives out (a former livestream's DASH pieces).
-            let js = youtube::js_runtime(&ytdlp).await;
-            let mut opts = vec![("ytdl-format", "bestaudio/best".to_string())];
-            let raw = youtube::mpv_raw_options(&js, &ytdlp.args);
-            if !raw.is_empty() {
-                opts.push(("ytdl-raw-options", raw));
-            }
-            let _ = tx.send(Internal::StreamReady {
-                seq,
-                track,
-                url: youtube::mpv_link(&id),
-                opts,
-                video: None,
-            });
-            // The picture, for the player in the centre panel, meanwhile: without it the song
-            // still plays.
-            let video = match youtube::picture(&ytdlp, &id).await {
-                Ok(video) => video,
-                Err(e) => {
-                    tracing::warn!("no picture for YouTube video {id}: {e:#}");
-                    None
+            let msg = match youtube::streams(&http, &id).await {
+                Ok(streams) => {
+                    // YouTube's streams only answer once its ad would have played.
+                    if streams.wait > 0 {
+                        if streams.wait > 2 {
+                            shared.info(format!("YouTube makes apps wait {} s before this video", streams.wait));
+                        }
+                        tokio::time::sleep(Duration::from_secs(streams.wait)).await;
+                    }
+                    Internal::StreamReady {
+                        seq,
+                        track,
+                        opts: youtube::mpv_options(&streams.sound),
+                        url: streams.sound.url,
+                        video: streams.picture.map(Arc::new),
+                    }
                 }
+                Err(e) => Internal::LoadFailed {
+                    seq,
+                    error: format!("Can't play “{}”: {e:#}", track.title),
+                },
             };
-            let _ = tx.send(Internal::VideoReady {
-                seq,
-                video: video.map(Arc::new),
-            });
+            let _ = tx.send(msg);
         });
     }
 
@@ -298,6 +237,7 @@ impl Service {
         self.mpv_preloaded = None;
         self.mpv_entry = None;
         self.playing = Some(track);
+        self.mpv_link = Some(link_for(url, opts));
         let volume = self.start_volume();
         if let Some(mpv) = &self.mpv {
             let _ = mpv.set_volume(volume).await;
@@ -455,7 +395,7 @@ impl Service {
                 });
             }
             // SoundCloud and YouTube streams are inspected through mpv once loaded.
-            Source::SoundCloud | Source::AppleMusic | Source::YouTube | Source::Server => {}
+            Source::SoundCloud | Source::YouTube | Source::Server => {}
         }
     }
 
@@ -477,6 +417,17 @@ impl Service {
             .and_then(|v| v.as_u64())
             .map(|r| r as u32);
         Some(AudioQuality::from_mpv(codec.as_str()?, bitrate, rate))
+    }
+
+    /// The picture of what mpv opened, when it has one (not a song's cover).
+    pub(super) async fn mpv_picture(&self) -> Option<youtube::VideoLink> {
+        let mpv = self.mpv.as_ref()?;
+        let link = self.mpv_link.clone()?;
+        let tracks = mpv
+            .command(serde_json::json!(["get_property", "track-list"]))
+            .await
+            .ok()?;
+        picture_of(&tracks, link)
     }
 
     pub(super) async fn pause(&mut self) {
@@ -662,6 +613,11 @@ impl Service {
                 if self.playing.as_ref().is_some_and(|t| streamed.contains(&t.source)) {
                     self.quality = self.mpv_stream_quality().await;
                 }
+                // A video file (or one on the media server, or a saved music video) has a
+                // picture too.
+                if self.video.is_none() && !cfg!(target_os = "ios") {
+                    self.video = self.mpv_picture().await.map(Arc::new);
+                }
                 self.publish_player();
                 self.update_presence();
                 self.refresh_mpv_preload().await;
@@ -696,6 +652,9 @@ impl Service {
                             self.load_seq += 1;
                             self.started_reported = false;
                             self.playing = next.clone();
+                            // Its picture, if it's a video file, once mpv has opened it.
+                            self.video = None;
+                            self.mpv_link = next.as_ref().and_then(|t| self.file_of(t)).map(|f| link_for(&f, &[]));
                             self.duration = next.map(|t| t.duration_secs()).unwrap_or(0.0);
                             self.set_position(0.0);
                             if let Some(t) = self.queue.current().cloned() {
@@ -717,24 +676,12 @@ impl Service {
                 }
                 "error" => {
                     let name = self.playing.as_ref().map(|t| t.title.clone()).unwrap_or_default();
-                    let youtube = self.playing.as_ref().is_some_and(|t| t.source == Source::YouTube);
-                    // A music video: yt-dlp's own reason ("Sign in to confirm your age") rather
-                    // than mpv's "loading failed".
-                    let why = match self.ytdl_problem.take().filter(|_| youtube) {
-                        Some(problem) => youtube::explain_problem(&problem),
-                        None if youtube && youtube::js_runtime_missing() => format!(
-                            "{}. {}",
-                            error.unwrap_or_else(|| "unknown error".into()),
-                            youtube::js_runtime_hint()
-                        ),
-                        None => error.unwrap_or_else(|| "unknown error".into()),
-                    };
+                    let why = error.unwrap_or_else(|| "unknown error".into());
                     self.load_failed(format!("Can't play “{name}”: {why}")).await;
                 }
                 _ => {}
             },
             MpvEvent::StartFile { playlist_entry_id } => self.mpv_entry = Some(playlist_entry_id),
-            MpvEvent::Problem(text) => self.ytdl_problem = Some(text),
             MpvEvent::Died => {}
         }
     }
@@ -1371,12 +1318,61 @@ impl Service {
         let fetcher = self.lyrics.clone();
         let tx = self.internal_tx.clone();
         let t = track.clone();
-        // Imported Apple Music songs: look lyrics up by metadata, which is what LRCLIB needs anyway.
         tokio::spawn(async move {
             let lyrics = fetcher.fetch(&t).await;
             let _ = tx.send(Internal::Lyrics { track_id: t.id, lyrics });
         });
     }
+}
+
+/// What mpv is asked to play, as a link ffmpeg can open the same way: its User-Agent and
+/// headers (a media server's ticket) come from mpv's per-file options.
+pub(super) fn link_for(url: &str, opts: &[(&str, String)]) -> youtube::Link {
+    let mut link = youtube::Link {
+        url: url.to_string(),
+        ..Default::default()
+    };
+    for (name, value) in opts {
+        match *name {
+            "user-agent" => link.user_agent = Some(value.clone()),
+            "http-header-fields" => link.headers.extend(
+                value
+                    .split(',')
+                    .filter_map(|field| field.split_once(": "))
+                    .map(|(n, v)| (n.to_string(), v.to_string())),
+            ),
+            _ => {}
+        }
+    }
+    link
+}
+
+/// The picture in mpv's `track-list`: its first video track that isn't a cover.
+pub(super) fn picture_of(tracks: &serde_json::Value, link: youtube::Link) -> Option<youtube::VideoLink> {
+    let video = tracks.as_array()?.iter().find(|t| {
+        t["type"] == "video" && !t["albumart"].as_bool().unwrap_or(false) && !t["image"].as_bool().unwrap_or(false)
+    })?;
+    let num = |k: &str| video[k].as_f64().unwrap_or(0.0);
+    let (width, height) = (num("demux-w") as u32, num("demux-h") as u32);
+    let codec = match video["codec"].as_str().unwrap_or("") {
+        "h264" => "H.264",
+        "hevc" => "HEVC",
+        "vp9" => "VP9",
+        "vp8" => "VP8",
+        "av1" => "AV1",
+        "mpeg4" => "MPEG-4",
+        _ => "Video",
+    };
+    Some(youtube::VideoLink {
+        link,
+        width,
+        height,
+        fps: num("demux-fps"),
+        label: match height {
+            0 => codec.to_string(),
+            h => format!("{codec} {h}p"),
+        },
+    })
 }
 
 /// Fraction (0..=1) of a fade of `len` seconds that started at `start`.
@@ -1399,9 +1395,8 @@ pub(super) fn load_lead(source: Source) -> f64 {
         Source::Local => 0.3,
         Source::Spotify => 1.5,
         Source::SoundCloud => 2.0,
-        Source::AppleMusic => 2.5,
-        // yt-dlp takes a few seconds to find a video's streams.
-        Source::YouTube => 4.0,
+        // A music video's streams are looked up on YouTube first.
+        Source::YouTube => 2.5,
         Source::Server => 0.6,
     }
 }

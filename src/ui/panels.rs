@@ -154,11 +154,9 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                     .collect();
                 if playlists.is_empty() && !collapsed {
                     ui.label(
-                        egui::RichText::new(
-                            "Playlists you make or import from Spotify, SoundCloud and Apple Music show up here.",
-                        )
-                        .small()
-                        .color(pal().text_faint),
+                        egui::RichText::new("Playlists you make or import from Spotify and SoundCloud show up here.")
+                            .small()
+                            .color(pal().text_faint),
                     );
                 }
                 egui::ScrollArea::vertical()

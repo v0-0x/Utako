@@ -139,38 +139,21 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             }
             ui.add_space(18.0);
         }
-        // Spotify songs come straight from Spotify while Utako is logged in to it; else they're
-        // found like Apple Music's.
-        let logged_in = cx.feed.spotify_logged_in;
-        let (spotify, found) = if logged_in {
-            (
-                "Spotify songs are saved straight from Spotify: Ogg Vorbis, 320 kbps with Premium.",
-                "Apple Music songs",
-            )
+        // Spotify songs come straight from Spotify while Utako is logged in to it; else the same
+        // recording is looked for on SoundCloud.
+        let spotify = if cx.feed.spotify_logged_in {
+            "Spotify songs are saved straight from Spotify: Ogg Vorbis, 320 kbps with Premium."
         } else {
-            (
-                "Log in to Spotify to save Spotify songs straight from Spotify.",
-                "Spotify and Apple Music songs",
-            )
-        };
-        let note = match st.ytdlp.map(|program| widgets::ytdlp_status(ui, cx, program)) {
-            Some(Some(Err(_))) => format!(
-                "yt-dlp isn't installed, so {found} are only looked for on SoundCloud. To find them on YouTube \
-                 too: {}",
-                crate::tools::install_hint("yt-dlp")
-            ),
-            Some(_) => format!(
-                "{found} are saved from the same recording on YouTube or SoundCloud (their audio is \
-                 DRM-protected), then tagged with all their details."
-            ),
-            None => format!(
-                "{found} are saved from the same recording on SoundCloud (YouTube is off in Settings; their \
-                 audio is DRM-protected), then tagged with all their details."
-            ),
+            "Log in to Spotify to save Spotify songs straight from Spotify. Until then they're saved from \
+             the same recording on SoundCloud, tagged with all their details."
         };
         ui.label(egui::RichText::new(spotify).size(12.0).color(pal().text_faint));
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(note).size(12.0).color(pal().text_faint));
+        ui.label(
+            egui::RichText::new("Music videos are saved as video files, with their picture and sound.")
+                .size(12.0)
+                .color(pal().text_faint),
+        );
     });
 }
 

@@ -1,10 +1,9 @@
-//! Saving songs as files. SoundCloud songs are downloaded directly. Spotify songs (and Apple
-//! Music songs matched to Spotify) are saved straight from Spotify through Utako's Spotify
-//! connection. Apple Music audio is DRM-protected, so for the others the same recording is found
-//! on YouTube (with yt-dlp) or SoundCloud and downloaded from there; Spotify songs too while
-//! Utako isn't logged in to Spotify. Every file is then tagged with the song's details (from
-//! Spotify when it is a Spotify song), its cover and its lyrics, and kept in the download folder
-//! or sent to the media server.
+//! Saving songs as files. SoundCloud songs are downloaded directly. Spotify songs are saved
+//! straight from Spotify through Utako's Spotify connection; while Utako isn't logged in to
+//! Spotify, the same recording is found on SoundCloud instead. Music videos are saved as video
+//! files (picture and sound) from YouTube. Every file is then tagged with the song's details
+//! (from Spotify when it is a Spotify song), its cover and its lyrics, and kept in the download
+//! folder or sent to the media server.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -20,7 +19,7 @@ use crate::integrations::lyrics::{self, LyricsFetcher};
 use crate::library::tags::{self, Metadata};
 use crate::model::{Source, Track};
 use crate::providers::soundcloud::{self, DownloadKind, SoundCloud};
-use crate::providers::youtube::{self, YtDlp};
+use crate::providers::youtube;
 use crate::providers::{spotify_audio, spotify_internal};
 
 pub type Progress<'a> = &'a (dyn Fn(f32) + Send + Sync);
@@ -35,10 +34,6 @@ pub struct Downloader {
     pub lyrics: Option<Arc<LyricsFetcher>>,
     /// For Spotify songs: their audio and all their details. `None`: not logged in to Spotify.
     pub spotify: Option<Session>,
-    /// The same song on Spotify, for an Apple Music song's details.
-    pub spotify_twin: Option<Track>,
-    /// `None`: don't look on YouTube.
-    pub ytdlp: Option<YtDlp>,
     /// Logged in to Spotify (`spotify` is `None` only when it couldn't connect).
     pub spotify_logged_in: bool,
     /// Convert Spotify's Ogg Vorbis to MP3 (with ffmpeg).
@@ -97,18 +92,14 @@ impl Downloader {
                 let meta = upload_details(track, saved.meta).await;
                 (saved.path, meta, from.to_string(), original)
             }
-            Source::Spotify | Source::AppleMusic => {
+            Source::Spotify => {
                 let (path, from) = self.spotify_or_found(track, work, fetching).await?;
                 (path, self.details(track).await, from, false)
             }
             Source::YouTube => {
-                let ytdlp = self
-                    .ytdlp
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("saving a YouTube video needs yt-dlp"))?;
                 let id = youtube::video_id(&track.id).ok_or_else(|| anyhow!("not a YouTube video"))?;
-                let path = youtube::download(ytdlp, id, work, fetching).await?;
-                (path, self.details(track).await, "YouTube".to_string(), false)
+                let saved = youtube::download(&self.http, id, &basic_metadata(track), work, fetching).await?;
+                (saved.path, basic_metadata(track), saved.label, false)
             }
             Source::Local => bail!("this song is already a file on your computer"),
             Source::Server => {
@@ -218,27 +209,17 @@ impl Downloader {
         }
     }
 
-    /// The Spotify song to save: `track` itself, or the Apple Music song's twin on Spotify.
-    fn on_spotify<'a>(&'a self, track: &'a Track) -> Option<&'a Track> {
-        match track.source {
-            Source::Spotify => Some(track),
-            Source::AppleMusic => self.spotify_twin.as_ref().filter(|t| t.source == Source::Spotify),
-            _ => None,
-        }
-    }
-
     /// Spotify's own audio, through Utako's Spotify connection. Without one (not logged in to
-    /// Spotify), and for an Apple Music song Spotify couldn't give, the same recording is found
-    /// on YouTube or SoundCloud instead.
+    /// Spotify), the same recording is found on SoundCloud instead.
     async fn spotify_or_found(&self, track: &Track, dir: &Path, progress: Progress<'_>) -> Result<(PathBuf, String)> {
-        let id = self.on_spotify(track).and_then(|t| t.id.strip_prefix("spotify:track:"));
+        let id = track.id.strip_prefix("spotify:track:");
         if let (Some(session), Some(id)) = (&self.spotify, id) {
-            match spotify_audio::download(session, id, dir, progress).await {
-                Ok(path) if self.spotify_mp3 => return Ok((to_mp3(&path).await, "Spotify".into())),
-                Ok(path) => return Ok((path, "Spotify".into())),
-                Err(e) if track.source == Source::AppleMusic => warn!("Spotify audio of {}: {e:#}", track.id),
-                Err(e) => return Err(e),
-            }
+            let path = spotify_audio::download(session, id, dir, progress).await?;
+            return Ok(if self.spotify_mp3 {
+                (to_mp3(&path).await, "Spotify".into())
+            } else {
+                (path, "Spotify".into())
+            });
         }
         if track.source == Source::Spotify && self.spotify_logged_in {
             bail!("Utako couldn't connect to Spotify (see Settings › Spotify); try again");
@@ -249,77 +230,33 @@ impl Downloader {
     /// The song's details: everything Spotify knows for Spotify songs, else what the library
     /// has.
     async fn details(&self, track: &Track) -> Metadata {
-        // An Apple Music song Utako already matched to Spotify gets Spotify's details.
-        if let Some(spotify_track) = self.on_spotify(track) {
-            if let Some(session) = &self.spotify {
-                match spotify_internal::track_details(session, &spotify_track.id).await {
-                    Ok(meta) if !meta.title.is_empty() => return meta,
-                    Ok(_) => {}
-                    Err(e) => warn!("Spotify details of {}: {e:#}", spotify_track.id),
-                }
+        if let (Source::Spotify, Some(session)) = (track.source, &self.spotify) {
+            match spotify_internal::track_details(session, &track.id).await {
+                Ok(meta) if !meta.title.is_empty() => return meta,
+                Ok(_) => {}
+                Err(e) => warn!("Spotify details of {}: {e:#}", track.id),
             }
         }
         basic_metadata(track)
     }
 
-    /// Finds the same recording on YouTube or SoundCloud and downloads it.
+    /// Finds the same recording on SoundCloud and downloads it.
     async fn find_and_download(&self, track: &Track, dir: &Path, progress: Progress<'_>) -> Result<(PathBuf, String)> {
         let artist = lyrics::first_artist(&track.artist);
         let title = lyrics::clean_title(&track.title);
-        let duration = (track.duration_ms > 0).then(|| track.duration_ms as f64 / 1000.0);
-
-        let mut youtube_problem = None;
-        if let Some(ytdlp) = &self.ytdlp {
-            match youtube::search(ytdlp, &format!("{artist} - {title}"), 10).await {
-                Ok(videos) => {
-                    let ranked = youtube::rank(&videos, &track.title, &track.artist, duration);
-                    if ranked.is_empty() {
-                        youtube_problem = Some("no matching video on YouTube".into());
-                    }
-                    for video in ranked.into_iter().take(3) {
-                        match youtube::download(ytdlp, &video.id, dir, progress).await {
-                            Ok(path) => return Ok((path, "YouTube".into())),
-                            Err(e) => {
-                                warn!("YouTube {} for {}: {e:#}", video.id, track.id);
-                                let fatal = e.to_string().contains("ffmpeg");
-                                youtube_problem = Some(format!("{e:#}"));
-                                if fatal {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) if e.is::<youtube::NotInstalled>() => {
-                    youtube_problem = Some(format!(
-                        "yt-dlp is needed to look on YouTube too. {}",
-                        crate::tools::install_hint("yt-dlp")
-                    ));
-                }
-                Err(e) => youtube_problem = Some(format!("{e:#}")),
+        let found = self
+            .soundcloud
+            .search(&format!("{artist} {title}"), 10)
+            .await
+            .map_err(|e| anyhow!("Not found: SoundCloud: {e:#}"))?;
+        let mut problem = "no full-length upload on SoundCloud".to_string();
+        for candidate in crate::service::ranked_matches(track, &found).into_iter().take(2) {
+            match self.soundcloud.download(&candidate, dir, progress).await {
+                Ok(saved) => return Ok((saved.path, "SoundCloud".into())),
+                Err(e) => problem = format!("SoundCloud: {e:#}"),
             }
-        } else {
-            youtube_problem = Some("YouTube is turned off in Settings".to_string());
         }
-
-        // An upload of the same recording on SoundCloud.
-        let soundcloud_problem = match self.soundcloud.search(&format!("{artist} {title}"), 10).await {
-            Ok(found) => {
-                let mut problem = "no full-length upload on SoundCloud".to_string();
-                for candidate in crate::service::ranked_matches(track, &found).into_iter().take(2) {
-                    match self.soundcloud.download(&candidate, dir, progress).await {
-                        Ok(saved) => return Ok((saved.path, "SoundCloud".into())),
-                        Err(e) => problem = format!("SoundCloud: {e:#}"),
-                    }
-                }
-                problem
-            }
-            Err(e) => format!("SoundCloud: {e:#}"),
-        };
-        match youtube_problem {
-            Some(yt) => bail!("Not found: {soundcloud_problem}; {yt}"),
-            None => bail!("Not found: {soundcloud_problem}"),
-        }
+        bail!("Not found: {problem}")
     }
 
     /// The first cover that downloads.
@@ -363,7 +300,7 @@ async fn upload_details(track: &Track, mut meta: Metadata) -> Metadata {
     meta
 }
 
-/// Details from the library's copy of the song (no Spotify session, or Apple Music).
+/// Details from the library's copy of the song (no Spotify session).
 pub fn basic_metadata(track: &Track) -> Metadata {
     let url = match track.source {
         Source::Spotify => track
@@ -518,7 +455,7 @@ fn server_place(source: Source, file: &Path, meta: &Metadata) -> String {
         .unwrap_or_else(|| "mp3".into());
     format!(
         "{}/{}.{ext}",
-        source.label(),
+        source.folder_name(),
         soundcloud::file_stem(&meta.artist, &meta.title)
     )
 }
@@ -579,8 +516,8 @@ mod tests {
             "Spotify/Artist - Song _ Part 2.ogg"
         );
         assert_eq!(
-            server_place(Source::AppleMusic, Path::new("/w/x.m4a"), &meta),
-            "Apple Music/Artist - Song _ Part 2.m4a"
+            server_place(Source::YouTube, Path::new("/w/x.mp4"), &meta),
+            "Music videos/Artist - Song _ Part 2.mp4"
         );
     }
 

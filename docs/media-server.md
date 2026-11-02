@@ -158,8 +158,8 @@ The same as the Aniko and KumoBox apps' uploads to a server (mediaserver's
   (`.lrc`) and cue sheets, and leaves hidden files behind.
 - Downloads go the same way when *Send downloads to the media server* is on (Settings ›
   Downloads) and the server lets this device upload: each song is made and tagged in Utako's
-  cache, sent as `<service>/Artist - Song.ext` (`Spotify/`, `SoundCloud/`, `Apple Music/`,
-  `YouTube/`) into the first music folder, then removed here. A 409 (another file of that
+  cache, sent as `<service>/Artist - Song.ext` (`Spotify/`, `SoundCloud/`, and `Music videos/`
+  for music videos, as MP4 or MKV) into the first music folder, then removed here. A 409 (another file of that
   name) fails that download rather than replacing the file. Utako asks for the library again
   a few seconds later, so the song shows up in the server's playlist.
 
@@ -183,3 +183,7 @@ These aren't in Utako yet:
 - Settings that sync on their own. That would need an `updatedAt` comparison, and the
   endpoints above already carry it.
 - Uploads from the iPhone app (it has no file picker for them).
+- Music videos in the server's library: its music side takes only audio files as songs, so
+  the videos Utako sends (MP4, M4V, MKV, WebM, MOV) are kept but not listed yet. Once its
+  library lists them (with `"video": true`, say), Utako plays them like the video files here:
+  the sound in mpv, the picture through ffmpeg with the same ticket.

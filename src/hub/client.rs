@@ -662,7 +662,6 @@ mod tests {
             gapless: true,
             audio_device: String::new(),
             exclusive: false,
-            ytdl: "yt-dlp".into(),
         };
         let mpv = Mpv::spawn(&opts, 11, tx).await.unwrap();
         mpv.command(json!(["set_property", "ao", "null"])).await.unwrap();

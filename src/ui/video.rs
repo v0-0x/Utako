@@ -437,11 +437,12 @@ impl VideoPlayer {
                 theme::bold_font(18.0),
                 a(Color32::WHITE),
             );
-            let mut how = vec![
-                track.artist.clone(),
-                Source::YouTube.label().to_string(),
-                self.video.label.clone(),
-            ];
+            // Where it plays from: YouTube, the media server, or a file here.
+            let from = match track.source {
+                Source::Local => "Video file",
+                other => other.label(),
+            };
+            let mut how = vec![track.artist.clone(), from.to_string(), self.video.label.clone()];
             if let Some(q) = &cx.player.quality {
                 how.push(q.label());
             }
@@ -539,10 +540,10 @@ impl VideoPlayer {
             theme::font(13.5),
             a(Color32::WHITE),
         );
-        // On the right: the video on YouTube.
-        let open = Rect::from_center_size(Pos2::new(rect.max.x - 44.0, y), Vec2::splat(40.0));
-        if round_button(ui, open, icon::ARROW_SQUARE_OUT, false, alpha, "Open on YouTube").clicked() {
-            if let Some(t) = &cx.player.current {
+        // On the right: a YouTube video on YouTube.
+        if let Some(t) = cx.player.current.as_ref().filter(|t| t.source == Source::YouTube) {
+            let open = Rect::from_center_size(Pos2::new(rect.max.x - 44.0, y), Vec2::splat(40.0));
+            if round_button(ui, open, icon::ARROW_SQUARE_OUT, false, alpha, "Open on YouTube").clicked() {
                 cx.actions.push(Action::OpenUrl(t.uri.clone()));
             }
         }

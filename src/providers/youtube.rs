@@ -1,16 +1,89 @@
-//! YouTube through yt-dlp: finds the official audio of a song and saves it. Used to download
-//! Spotify and Apple Music songs, whose own streams are DRM-protected.
+//! Music videos from YouTube, through YouTube's own API (InnerTube) the way its apps use it:
+//! no sign-in, no yt-dlp and none of YouTube's JavaScript. Search goes through the website's
+//! client. A video's streams come from the visionOS app's client, whose links play as they
+//! are: yt-dlp uses the same one when it has no JavaScript runtime. Videos YouTube only shows
+//! to signed-in adults, and some made for kids, don't play this way; they say so.
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use serde_json::{json, Value};
+use tracing::{info, warn};
 
-use crate::model::{normalize_artist, normalize_title};
+use crate::library::tags::Metadata;
+
+/// Where YouTube is: its website (watch pages) and its API. Tests point them elsewhere.
+#[derive(Debug, Clone)]
+pub struct Site {
+    pub web: String,
+    pub api: String,
+}
+
+impl Default for Site {
+    fn default() -> Self {
+        Site {
+            web: "https://www.youtube.com".into(),
+            api: "https://www.youtube.com/youtubei/v1".into(),
+        }
+    }
+}
+
+/// An InnerTube client: who Utako says it is to YouTube's API.
+struct Client {
+    name: &'static str,
+    /// Its number, for the `X-YouTube-Client-Name` header.
+    id: u32,
+    version: &'static str,
+    user_agent: &'static str,
+    /// More about the device (`deviceMake`, `osName`…).
+    device: &'static [(&'static str, &'static str)],
+}
+
+/// The website, for search.
+const WEB: Client = Client {
+    name: "WEB",
+    id: 1,
+    version: "2.20260708.00.00",
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
+                 Chrome/140.0.0.0 Safari/537.36",
+    device: &[],
+};
+
+/// The visionOS app, for a video's streams: its links need no signature and no proof of being
+/// a browser ("PO token"), so they play as they come.
+const VISIONOS: Client = Client {
+    name: "VISIONOS",
+    id: 101,
+    version: "1.02",
+    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) \
+                 Version/26.0 Safari/605.1.15",
+    device: &[
+        ("deviceMake", "Apple"),
+        ("deviceModel", "RealityDevice17,1"),
+        ("osName", "visionOS"),
+        ("osVersion", "26.5.23O471"),
+    ],
+};
+
+/// Search results: videos only.
+const VIDEOS_ONLY: &str = "EgIQAfABAQ==";
+
+/// Cookies every request carries, as yt-dlp sends them: the cookie banner answered (so Europe
+/// gets the page, not the question) and English.
+const BASE_COOKIES: &str = "SOCS=CAI; PREF=hl=en&tz=UTC";
+
+/// A visitor: the ID and cookies YouTube gives a browser on its first page, sent with every
+/// request after it, as a browser does. Kept for a few hours.
+#[derive(Debug, Clone, Default)]
+struct Visitor {
+    id: Option<String>,
+    cookies: String,
+}
+
+static VISITOR: Mutex<Option<(Visitor, Instant)>> = Mutex::new(None);
+const VISITOR_FOR: Duration = Duration::from_secs(6 * 3600);
 
 /// A search result.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,771 +93,813 @@ pub struct Video {
     pub channel: String,
     /// Seconds.
     pub duration: Option<f64>,
-    pub description: String,
 }
 
-/// yt-dlp isn't installed (or not where the settings say).
-#[derive(Debug)]
-pub struct NotInstalled;
-
-impl std::fmt::Display for NotInstalled {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("yt-dlp is not installed")
-    }
+/// A link and what to send with it: the User-Agent and any headers the link was made for.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Link {
+    pub url: String,
+    pub user_agent: Option<String>,
+    pub headers: Vec<(String, String)>,
 }
 
-impl std::error::Error for NotInstalled {}
-
-/// Versions of a song nobody wants instead of the song (unless the song is one).
-const UNWANTED: &[&str] = &[
-    "live",
-    "remix",
-    "cover",
-    "karaoke",
-    "instrumental",
-    "sped up",
-    "slowed",
-    "nightcore",
-    "8d",
-    "acapella",
-    "a cappella",
-    "reverb",
-    "bass boosted",
-    "1 hour",
-    "extended",
-    "reaction",
-    "tutorial",
-];
-
-/// The yt-dlp program and the user's extra options (e.g. `--cookies-from-browser firefox`).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct YtDlp {
-    pub program: String,
-    pub args: Vec<String>,
-    /// Convert downloads to MP3 instead of keeping YouTube's Opus / AAC.
-    pub mp3: bool,
+/// A music video's picture, for the player in the app's centre panel: a stream on YouTube, or a
+/// video file.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct VideoLink {
+    pub link: Link,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    /// "VP9 720p"
+    pub label: String,
 }
 
-impl YtDlp {
-    /// From the settings: the program and its extra options as typed (quotes allowed).
-    pub fn new(program: &str, args: &str) -> YtDlp {
-        YtDlp {
-            // The yt-dlp shipped with Utako on Windows and macOS, unless a path is set.
-            program: crate::tools::resolve(program, "yt-dlp"),
-            args: split_args(args),
-            mp3: false,
-        }
-    }
-
-    pub fn with_mp3(mut self, mp3: bool) -> YtDlp {
-        self.mp3 = mp3;
-        self
-    }
-
-    /// Options for saving the audio of a video.
-    fn download_args(&self) -> Vec<&'static str> {
-        let mut args = vec![
-            "--no-playlist",
-            "--newline",
-            "--progress",
-            "--no-mtime",
-            // The best audio YouTube has, by bitrate: 256 kbps AAC when it offers it (YouTube
-            // Music Premium, with --cookies-from-browser), else ~160 kbps Opus.
-            "--format",
-            "bestaudio/best",
-            "--format-sort",
-            "abr,asr",
-            "--extract-audio",
-        ];
-        if self.mp3 {
-            // Re-encoded at the highest VBR setting (~245 kbps); it can't add quality, but MP3
-            // plays everywhere.
-            args.extend(["--audio-format", "mp3", "--audio-quality", "0"]);
-        }
-        // Otherwise the codec is kept and only moved into an .opus / .m4a file (needs ffmpeg).
-        args
-    }
-
-    fn command(&self) -> Command {
-        let mut cmd = crate::tools::command(&self.program);
-        // The user's yt-dlp config file could change file names or formats; their extra
-        // options go first so the ones Utako needs win.
-        cmd.args(["--ignore-config", "--no-warnings"]);
-        // The ffmpeg that comes with Utako isn't on the PATH.
-        if let Some(dir) = crate::tools::bundled_ffmpeg_dir() {
-            cmd.arg("--ffmpeg-location").arg(dir);
-        }
-        // The JavaScript runtime that unlocks YouTube's streams, once it's known.
-        if let Some(JsRuntime::Found(args)) = JS_RUNTIME.get() {
-            cmd.args(args);
-        }
-        cmd.args(&self.args).stdin(Stdio::null()).kill_on_drop(true);
-        cmd
-    }
-
-    /// Whether this yt-dlp has option `name` (from its `--help`).
-    async fn has_option(&self, name: &str) -> bool {
-        let mut cmd = crate::tools::command(&self.program);
-        cmd.arg("--help")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
-            Ok(Ok(out)) => String::from_utf8_lossy(&out.stdout).contains(name),
-            _ => false,
-        }
-    }
-
-    /// yt-dlp's version, i.e. whether it is installed and runs.
-    pub async fn version(&self) -> Result<String> {
-        let mut cmd = crate::tools::command(&self.program);
-        cmd.arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let out = tokio::time::timeout(Duration::from_secs(20), cmd.output())
-            .await
-            .map_err(|_| anyhow!("yt-dlp didn't answer"))?
-            .map_err(spawn_error)?;
-        if !out.status.success() {
-            bail!("{}", last_error(&String::from_utf8_lossy(&out.stderr)));
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    }
+/// One of a video's streams.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Format {
+    pub itag: u32,
+    pub url: String,
+    /// "video/mp4", "audio/webm"
+    pub mime: String,
+    /// "avc1.640028", "opus"; the first of the codecs of one with picture and sound.
+    pub codec: String,
+    pub video: bool,
+    pub audio: bool,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    /// Bits a second.
+    pub bitrate: u64,
+    /// Bytes, when YouTube says.
+    pub size: Option<u64>,
+    /// "Stable volume": a quieter mix of the sound, never chosen.
+    pub drc: bool,
+    /// The video's own language (a dubbed sound track isn't).
+    pub original: bool,
 }
 
-/// The JavaScript runtime yt-dlp uses for YouTube. YouTube hides its stream links behind
-/// JavaScript, and since late 2025 yt-dlp runs that JavaScript in Deno, Node, Bun or QuickJS
-/// ("EJS"); without one it falls back to a few YouTube clients whose streams often don't play.
+/// What a video plays from.
 #[derive(Debug, Clone, PartialEq)]
-pub enum JsRuntime {
-    /// An older yt-dlp, which unlocks the links itself.
-    NotNeeded,
-    /// The options that point yt-dlp at the runtime found.
-    Found(Vec<String>),
-    /// None installed.
-    Missing,
+pub struct Streams {
+    /// The sound, for mpv.
+    pub sound: Link,
+    /// The picture, for the player in the centre panel.
+    pub picture: Option<VideoLink>,
+    /// Seconds YouTube makes an app wait before the streams answer (its ad's length).
+    pub wait: u64,
 }
 
-static JS_RUNTIME: std::sync::OnceLock<JsRuntime> = std::sync::OnceLock::new();
-
-/// Works out the JavaScript runtime once (it asks yt-dlp for its options), so the commands
-/// made after it pass it on.
-pub async fn js_runtime(ytdlp: &YtDlp) -> JsRuntime {
-    if let Some(known) = JS_RUNTIME.get() {
-        return known.clone();
-    }
-    let supported = ytdlp.has_option("--js-runtimes").await;
-    let found = js_runtime_for(supported, crate::tools::find);
-    if found == JsRuntime::Missing {
-        tracing::warn!("yt-dlp has no JavaScript runtime for YouTube (install deno)");
-    }
-    let _ = JS_RUNTIME.set(found.clone());
-    found
+/// A saved music video.
+#[derive(Debug)]
+pub struct Saved {
+    pub path: PathBuf,
+    /// What was saved, for the Downloads list: "YouTube, H.264 1080p".
+    pub label: String,
 }
 
-/// The runtime yt-dlp should use: the Deno that comes with Utako (Windows, macOS), else the
-/// first one installed, in yt-dlp's own order of preference.
-fn js_runtime_for(supported: bool, find: impl Fn(&str) -> Option<PathBuf>) -> JsRuntime {
-    if !supported {
-        return JsRuntime::NotNeeded;
-    }
-    for (program, runtime) in [("deno", "deno"), ("node", "node"), ("bun", "bun"), ("qjs", "quickjs")] {
-        if let Some(path) = find(program) {
-            return JsRuntime::Found(vec!["--js-runtimes".into(), format!("{runtime}:{}", path.display())]);
-        }
-    }
-    JsRuntime::Missing
-}
+// ------------------------------------------------------------------------------------- API
 
-/// What to do when YouTube's streams don't play for lack of a JavaScript runtime.
-pub fn js_runtime_hint() -> &'static str {
-    if cfg!(target_os = "linux") {
-        "yt-dlp needs Deno to unlock YouTube's streams: sudo pacman -S deno, then start Utako again"
-    } else {
-        "yt-dlp needs Deno to unlock YouTube's streams; it comes with Utako, so reinstall Utako"
-    }
-}
-
-/// Whether the JavaScript runtime is known to be missing.
-pub fn js_runtime_missing() -> bool {
-    JS_RUNTIME.get() == Some(&JsRuntime::Missing)
-}
-
-/// Splits options typed in a text field: by spaces, keeping "quoted parts" together.
-pub fn split_args(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    let mut started = false;
-    for c in s.chars() {
-        match (quote, c) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), c) => current.push(c),
-            (None, '"' | '\'') => {
-                quote = Some(c);
-                started = true;
-            }
-            (None, c) if c.is_whitespace() => {
-                if started {
-                    out.push(std::mem::take(&mut current));
-                    started = false;
-                }
-            }
-            (None, c) => {
-                current.push(c);
-                started = true;
-            }
-        }
-    }
-    if started {
-        out.push(current);
-    }
-    out
-}
-
-/// Turns YouTube's "Sign in to confirm you're not a bot" check, which browser cookies get
-/// past, into what to do about it.
-fn explain(reason: &str) -> String {
-    let lower = reason.to_lowercase();
-    if lower.contains("not a bot") || lower.contains("confirm your age") {
-        format!(
-            "YouTube wants a signed-in browser: add --cookies-from-browser firefox (or chrome) under \
-             Settings → Downloads → Extra yt-dlp options ({reason})"
-        )
-    } else {
-        reason.to_string()
-    }
-}
-
-fn spawn_error(e: std::io::Error) -> anyhow::Error {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        anyhow::Error::new(NotInstalled)
-    } else {
-        anyhow!(e).context("couldn't run yt-dlp")
-    }
-}
-
-/// Searches YouTube for `query`.
-pub async fn search(ytdlp: &YtDlp, query: &str, limit: usize) -> Result<Vec<Video>> {
-    let mut cmd = ytdlp.command();
-    cmd.args(["--flat-playlist", "--dump-single-json"])
-        .arg(format!("ytsearch{limit}:{query}"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
-        .await
-        .map_err(|_| anyhow!("YouTube search timed out"))?
-        .map_err(spawn_error)?;
-    if !out.status.success() {
-        bail!(
-            "YouTube search failed: {}",
-            explain(&last_error(&String::from_utf8_lossy(&out.stderr)))
-        );
-    }
-    parse_search(&out.stdout)
-}
-
-pub fn parse_search(json: &[u8]) -> Result<Vec<Video>> {
-    let v: Value = serde_json::from_slice(json).context("unexpected output from yt-dlp")?;
-    let text = |e: &Value, key: &str| e.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
-    let entries = v.get("entries").and_then(Value::as_array).cloned().unwrap_or_default();
-    Ok(entries
-        .iter()
-        .filter_map(|e| {
-            let id = text(e, "id");
-            // Channels and playlists show up in searches too; videos have 11 character ids.
-            let live = matches!(
-                e.get("live_status").and_then(Value::as_str),
-                Some("is_live" | "is_upcoming")
-            );
-            if id.len() != 11 || live {
-                return None;
-            }
-            let channel = Some(text(e, "channel"))
-                .filter(|c| !c.is_empty())
-                .unwrap_or_else(|| text(e, "uploader"));
-            Some(Video {
-                id,
-                title: text(e, "title"),
-                channel,
-                duration: e.get("duration").and_then(Value::as_f64),
-                description: text(e, "description"),
-            })
-        })
-        .collect())
-}
-
-/// Lowercase words only, padded with spaces so `has(" x ")` finds whole words.
-fn words(s: &str) -> String {
-    let cleaned: String = s
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
-        .collect();
-    format!(" {} ", cleaned.split_whitespace().collect::<Vec<_>>().join(" "))
-}
-
-fn has(padded: &str, phrase: &str) -> bool {
-    padded.contains(&format!(" {phrase} "))
-}
-
-/// Videos that are this song, best first: the artist's auto-generated "Topic" upload (the
-/// studio recording) beats official videos, and the length has to match.
-pub fn rank<'a>(videos: &'a [Video], title: &str, artist: &str, duration: Option<f64>) -> Vec<&'a Video> {
-    let want = normalize_title(title);
-    let title_words: Vec<&str> = want.split_whitespace().collect();
-    let main_artist = normalize_artist(artist);
-    let song = words(title);
-    if title_words.is_empty() || main_artist.is_empty() {
-        return Vec::new();
-    }
-    let squashed_artist = main_artist.replace(' ', "");
-    let mut scored: Vec<(f64, &Video)> = videos
-        .iter()
-        .filter_map(|v| {
-            let vt = words(&v.title);
-            let channel = words(&v.channel);
-            let found = title_words.iter().filter(|w| has(&vt, w)).count();
-            if found * 5 < title_words.len() * 4 {
-                return None;
-            }
-            if UNWANTED.iter().any(|u| has(&vt, u) && !has(&song, u)) {
-                return None;
-            }
-            let topic = channel.trim() == format!("{main_artist} topic");
-            let by_artist = has(&channel, &main_artist)
-                || channel.replace(' ', "").contains(&squashed_artist)
-                || has(&vt, &main_artist);
-            if !topic && !by_artist {
-                return None;
-            }
-            let mut score = 0.0;
-            match (duration.filter(|d| *d > 0.0), v.duration) {
-                (Some(want), Some(got)) => {
-                    let diff = (want - got).abs();
-                    if diff > (want * 0.05).max(6.0) {
-                        return None;
-                    }
-                    score += 30.0 - diff * 3.0;
-                }
-                _ => score -= 15.0,
-            }
-            if topic {
-                score += 40.0;
-            }
-            if v.description.to_lowercase().contains("provided to youtube by") {
-                score += 10.0;
-            }
-            if has(&vt, "audio") {
-                score += 5.0;
-            }
-            Some((score, v))
-        })
-        .collect();
-    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    scored.into_iter().map(|(_, v)| v).collect()
-}
-
-/// Saves the audio of video `id` into `dir` (Opus or AAC as YouTube has it, no re-encoding).
-/// Returns the file.
-pub async fn download(ytdlp: &YtDlp, id: &str, dir: &Path, progress: &(dyn Fn(f32) + Send + Sync)) -> Result<PathBuf> {
-    let stem = format!(".multimusic-yt-{id}");
-    let result = tokio::time::timeout(
-        Duration::from_secs(30 * 60),
-        run_download(ytdlp, id, dir, &stem, progress),
-    )
-    .await
-    .unwrap_or_else(|_| Err(anyhow!("the YouTube download took too long")));
-    if result.is_err() {
-        remove_leftovers(dir, &stem).await;
-    }
-    result
-}
-
-async fn run_download(
-    ytdlp: &YtDlp,
-    id: &str,
-    dir: &Path,
-    stem: &str,
-    progress: &(dyn Fn(f32) + Send + Sync),
-) -> Result<PathBuf> {
-    js_runtime(ytdlp).await;
-    let mut cmd = ytdlp.command();
-    cmd.args(ytdlp.download_args())
-        .args([
-            "--progress-template",
-            "download:mmprog %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s",
-            "--print",
-            "after_move:mmfile %(filepath)s",
-            "--paths",
-        ])
-        .arg(dir)
-        .arg("--output")
-        .arg(format!("{stem}.%(ext)s"))
-        .arg(format!("https://www.youtube.com/watch?v={id}"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(spawn_error)?;
-    // Progress, the saved path and errors come on both stdout and stderr.
-    let (tx, mut lines) = tokio::sync::mpsc::unbounded_channel::<String>();
-    forward_lines(child.stdout.take().context("no stdout")?, tx.clone());
-    forward_lines(child.stderr.take().context("no stderr")?, tx);
-    let mut file = None;
-    let mut log = String::new();
-    while let Some(line) = lines.recv().await {
-        handle_line(&line, &mut file, &mut log, progress);
-    }
-    let status = child.wait().await.context("yt-dlp didn't finish")?;
-    if !status.success() {
-        let reason = last_error(&log);
-        if reason.contains("ffmpeg") || reason.contains("ffprobe") {
-            bail!(
-                "yt-dlp needs ffmpeg to save audio. {}",
-                crate::tools::install_hint("ffmpeg")
-            );
-        }
-        bail!("YouTube: {}", explain(&reason));
-    }
-    let path = match file.map(PathBuf::from).filter(|p| p.exists()) {
-        Some(p) => p,
-        None => find_output(dir, stem)
-            .await
-            .context("yt-dlp finished but the file isn't there")?,
-    };
-    progress(1.0);
-    Ok(path)
-}
-
-fn forward_lines(
-    stream: impl tokio::io::AsyncRead + Unpin + Send + 'static,
-    tx: tokio::sync::mpsc::UnboundedSender<String>,
-) {
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stream).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
+fn context(client: &Client) -> Value {
+    let mut c = json!({
+        "clientName": client.name,
+        "clientVersion": client.version,
+        "hl": "en",
+        "timeZone": "UTC",
+        "utcOffsetMinutes": 0,
     });
-}
-
-fn handle_line(line: &str, file: &mut Option<String>, log: &mut String, progress: &(dyn Fn(f32) + Send + Sync)) {
-    let line = line.trim();
-    if let Some(rest) = line.strip_prefix("mmprog ") {
-        let n: Vec<Option<f64>> = rest.split_whitespace().map(|x| x.parse().ok()).collect();
-        let done = n.first().copied().flatten();
-        let total = n.get(1).copied().flatten().or(n.get(2).copied().flatten());
-        if let (Some(done), Some(total)) = (done, total.filter(|t| *t > 0.0)) {
-            // The last few percent are ffmpeg moving the audio into its file.
-            progress(((done / total) as f32 * 0.97).min(0.97));
-        }
-    } else if let Some(path) = line.strip_prefix("mmfile ") {
-        *file = Some(path.to_string());
-    } else if !line.is_empty() {
-        log.push_str(line);
-        log.push('\n');
+    for (k, v) in client.device {
+        c[*k] = json!(v);
     }
-}
-
-/// The most useful line of yt-dlp's output: its last error, without the "[youtube] id:" part.
-fn last_error(output: &str) -> String {
-    let line = output
-        .lines()
-        .rev()
-        .find(|l| l.starts_with("ERROR:"))
-        .or_else(|| output.lines().rev().find(|l| !l.trim().is_empty()))
-        .unwrap_or("yt-dlp failed");
-    let line = line.trim_start_matches("ERROR:").trim();
-    // "[youtube] dQw4w9WgXcQ: Sign in to confirm your age" → "Sign in to confirm your age"
-    let line = match line.strip_prefix('[').and_then(|r| r.split_once("] ")) {
-        Some((_, rest)) => rest.split_once(": ").map_or(rest, |(_, msg)| msg),
-        None => line,
-    };
-    line.chars().take(200).collect()
-}
-
-async fn find_output(dir: &Path, stem: &str) -> Option<PathBuf> {
-    let mut entries = tokio::fs::read_dir(dir).await.ok()?;
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let temporary = [".part", ".ytdl", ".temp", ".webm"].iter().any(|t| name.ends_with(t));
-        if name.starts_with(&format!("{stem}.")) && !temporary {
-            return Some(entry.path());
-        }
+    if client.id != WEB.id {
+        c["userAgent"] = json!(client.user_agent);
     }
-    None
+    json!({ "client": c })
 }
 
-async fn remove_leftovers(dir: &Path, stem: &str) {
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
-        return;
-    };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        if entry.file_name().to_string_lossy().starts_with(stem) {
-            let _ = tokio::fs::remove_file(entry.path()).await;
+/// A call to YouTube's API (`search`, `player`) as `client`.
+async fn call(
+    http: &reqwest::Client,
+    site: &Site,
+    client: &Client,
+    visitor: &Visitor,
+    endpoint: &str,
+    mut body: Value,
+) -> Result<Value> {
+    body["context"] = context(client);
+    let mut req = http
+        .post(format!("{}/{endpoint}?prettyPrint=false", site.api))
+        .header(reqwest::header::USER_AGENT, client.user_agent)
+        .header("X-YouTube-Client-Name", client.id.to_string())
+        .header("X-YouTube-Client-Version", client.version)
+        .header("Origin", "https://www.youtube.com")
+        .header(reqwest::header::COOKIE, cookies(visitor))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .timeout(Duration::from_secs(20))
+        .body(body.to_string());
+    if let Some(id) = &visitor.id {
+        req = req.header("X-Goog-Visitor-Id", id);
+    }
+    let resp = req.send().await.map_err(|e| {
+        if e.is_connect() || e.is_timeout() {
+            anyhow!("couldn't reach YouTube. Check your internet connection")
+        } else {
+            anyhow!("couldn't reach YouTube ({})", e.without_url())
+        }
+    })?;
+    let status = resp.status();
+    let bytes = crate::http::read_capped(resp, 16 << 20).await?;
+    if !status.is_success() {
+        let v: Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        match v["error"]["message"].as_str().filter(|m| !m.is_empty()) {
+            Some(msg) => bail!("YouTube answered {status}: {msg}"),
+            None => bail!("YouTube answered {status}"),
         }
     }
+    serde_json::from_slice(&bytes).context("YouTube's answer wasn't what Utako expected")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn video(id: &str, title: &str, channel: &str, duration: f64, description: &str) -> Video {
-        Video {
-            id: id.into(),
-            title: title.into(),
-            channel: channel.into(),
-            duration: Some(duration),
-            description: description.into(),
-        }
+fn cookies(visitor: &Visitor) -> String {
+    if visitor.cookies.is_empty() {
+        BASE_COOKIES.to_string()
+    } else {
+        format!("{BASE_COOKIES}; {}", visitor.cookies)
     }
+}
 
-    #[test]
-    fn parses_search_results() {
-        let json = br#"{"_type":"playlist","entries":[
-            {"_type":"url","id":"dQw4w9WgXcQ","title":"Never Gonna Give You Up","channel":"Rick Astley - Topic","duration":213.0,"description":"Provided to YouTube by Sony Music"},
-            {"_type":"url","id":"UCuAXFkgsw1L7xaCfnd5JJOw","title":"Rick Astley","uploader":"Rick Astley"},
-            {"_type":"url","id":"abcdefghijk","title":"Live now","channel":"x","live_status":"is_live"},
-            {"_type":"url","id":"lYBUbBu4W08","title":"Rick Astley - Never Gonna Give You Up (Official Video)","uploader":"Rick Astley","duration":212}
-        ]}"#;
-        let found = parse_search(json).unwrap();
-        assert_eq!(found.len(), 2);
-        assert_eq!(found[0].channel, "Rick Astley - Topic");
-        assert_eq!(found[0].duration, Some(213.0));
-        assert_eq!(found[1].channel, "Rick Astley");
-        assert!(parse_search(b"not json").is_err());
-    }
+/// The visitor ID and cookies from a watch page, as a browser gets them on its first visit,
+/// and the page.
+async fn visit(http: &reqwest::Client, site: &Site, video: &str) -> Result<(Visitor, String)> {
+    let resp = http
+        .get(format!("{}/watch?v={video}&bpctr=9999999999&has_verified=1", site.web))
+        .header(reqwest::header::USER_AGENT, WEB.user_agent)
+        .header(reqwest::header::COOKIE, BASE_COOKIES)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await?
+        .error_for_status()?;
+    let cookies: Vec<String> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| v.split(';').next())
+        .map(|pair| pair.trim().to_string())
+        .filter(|pair| {
+            pair.split_once('=')
+                .is_some_and(|(name, value)| !name.is_empty() && !value.is_empty() && name != "SOCS" && name != "PREF")
+        })
+        .collect();
+    let page = String::from_utf8_lossy(&crate::http::read_capped(resp, 8 << 20).await?).into_owned();
+    let id = json_string(&page, "VISITOR_DATA").or_else(|| json_string(&page, "visitorData"));
+    Ok((
+        Visitor {
+            id,
+            cookies: cookies.join("; "),
+        },
+        page,
+    ))
+}
 
-    #[test]
-    fn picks_the_studio_recording() {
-        let videos = vec![
-            video(
-                "aaaaaaaaaaa",
-                "Rick Astley - Never Gonna Give You Up (Official Music Video)",
-                "Rick Astley",
-                213.0,
-                "",
-            ),
-            video(
-                "bbbbbbbbbbb",
-                "Never Gonna Give You Up",
-                "Rick Astley - Topic",
-                214.0,
-                "Provided to YouTube by Sony",
-            ),
-            video(
-                "ccccccccccc",
-                "Never Gonna Give You Up (Live at Glastonbury)",
-                "Rick Astley",
-                215.0,
-                "",
-            ),
-            video(
-                "ddddddddddd",
-                "Never Gonna Give You Up - Karaoke",
-                "Sing King",
-                213.0,
-                "",
-            ),
-            video("eeeeeeeeeee", "Never Gonna Give You Up (cover)", "Some Band", 213.0, ""),
-            video(
-                "fffffffffff",
-                "Rick Astley - Never Gonna Give You Up (Extended Mix)",
-                "RickAstleyVEVO",
-                360.0,
-                "",
-            ),
-            video(
-                "ggggggggggg",
-                "Rick Astley - Together Forever",
-                "Rick Astley",
-                213.0,
-                "",
-            ),
-        ];
-        let ranked: Vec<&str> = rank(&videos, "Never Gonna Give You Up", "Rick Astley", Some(213.6))
-            .iter()
-            .map(|v| v.id.as_str())
-            .collect();
-        assert_eq!(ranked, vec!["bbbbbbbbbbb", "aaaaaaaaaaa"]);
-
-        // Wanted versions are allowed when the song is one; "feat." credits don't matter.
-        let live = rank(
-            &videos,
-            "Never Gonna Give You Up - Live at Glastonbury",
-            "Rick Astley",
-            Some(215.0),
-        );
-        assert_eq!(live.first().map(|v| v.id.as_str()), Some("ccccccccccc"));
-        let feat = rank(
-            &videos,
-            "Never Gonna Give You Up (feat. Nobody)",
-            "Rick Astley, Nobody",
-            Some(214.0),
-        );
-        assert_eq!(feat.first().map(|v| v.id.as_str()), Some("bbbbbbbbbbb"));
-        // Channels named after the artist without spaces count as the artist.
-        let vevo = [video(
-            "hhhhhhhhhhh",
-            "Never Gonna Give You Up",
-            "RickAstleyVEVO",
-            213.0,
-            "",
-        )];
-        assert_eq!(
-            rank(&vevo, "Never Gonna Give You Up", "Rick Astley", Some(213.0)).len(),
-            1
-        );
-        // Nothing for a different song or length.
-        assert!(rank(&videos, "Something Else", "Rick Astley", Some(213.0)).is_empty());
-        assert!(rank(&videos[1..2], "Never Gonna Give You Up", "Rick Astley", Some(250.0)).is_empty());
-    }
-
-    #[test]
-    fn download_quality_options() {
-        let keep = YtDlp::new("yt-dlp", "").download_args();
-        assert!(keep.windows(2).any(|w| w == ["--format-sort", "abr,asr"]));
-        assert!(!keep.contains(&"--audio-format"));
-        let mp3 = YtDlp::new("yt-dlp", "").with_mp3(true).download_args();
-        assert!(mp3.windows(2).any(|w| w == ["--audio-format", "mp3"]));
-        assert!(mp3.windows(2).any(|w| w == ["--audio-quality", "0"]));
-    }
-
-    #[test]
-    fn options_from_the_settings() {
-        assert_eq!(
-            split_args("  --cookies-from-browser   firefox "),
-            vec!["--cookies-from-browser", "firefox"]
-        );
-        assert_eq!(
-            split_args(r#"--cookies "/home/me/my cookies.txt" -4 --proxy ''"#),
-            vec!["--cookies", "/home/me/my cookies.txt", "-4", "--proxy", ""]
-        );
-        assert!(split_args("").is_empty());
-    }
-
-    #[test]
-    fn readable_errors() {
-        let out = "[youtube] Extracting URL\nERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm your age. This video may be inappropriate\n";
-        assert_eq!(
-            last_error(out),
-            "Sign in to confirm your age. This video may be inappropriate"
-        );
-        assert_eq!(
-            last_error("ERROR: Postprocessing: ffprobe and ffmpeg not found."),
-            "Postprocessing: ffprobe and ffmpeg not found."
-        );
-        assert_eq!(last_error(""), "yt-dlp failed");
-        assert!(explain("Sign in to confirm you're not a bot. Use --cookies-from-browser").contains("Settings"));
-        // Age-restricted videos need a signed-in browser too.
-        assert!(explain("Sign in to confirm your age. This video may be inappropriate").contains("Settings"));
-        assert_eq!(explain("Video unavailable"), "Video unavailable");
-    }
-
-    /// Writes an executable stand-in for yt-dlp.
-    fn fake_ytdlp(dir: &Path, name: &str, body: &str) -> String {
-        use std::os::unix::fs::PermissionsExt;
-        let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n[ \"$1\" = --probe ] && exit 0\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // Another test starting a process while this file was open for writing can leave the
-        // child holding it for a moment, and running it then fails with "Text file busy".
-        for _ in 0..100 {
-            match std::process::Command::new(&path).arg("--probe").status() {
-                Ok(_) => break,
-                Err(e) if e.raw_os_error() == Some(26) => std::thread::sleep(Duration::from_millis(20)),
-                Err(e) => panic!("can't run {}: {e}", path.display()),
+/// The visitor kept, or a new one (from `video`'s watch page) when there's none or `fresh`.
+async fn visitor(http: &reqwest::Client, site: &Site, video: &str, fresh: bool) -> Visitor {
+    if !fresh {
+        if let Some((v, at)) = VISITOR.lock().unwrap().clone() {
+            if at.elapsed() < VISITOR_FOR {
+                return v;
             }
         }
-        path.to_string_lossy().into_owned()
     }
-
-    #[tokio::test]
-    async fn runs_ytdlp() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_path_buf();
-        let out = dir.join("out");
-        std::fs::create_dir_all(&out).unwrap();
-
-        // Search: the JSON comes back parsed.
-        let search_tool = fake_ytdlp(
-            &dir,
-            "search",
-            r#"echo '{"entries":[{"id":"dQw4w9WgXcQ","title":"Never Gonna Give You Up","channel":"Rick Astley - Topic","duration":213}]}'"#,
-        );
-        let found = search(
-            &YtDlp::new(&search_tool, ""),
-            "Rick Astley - Never Gonna Give You Up",
-            10,
-        )
-        .await
-        .unwrap();
-        assert_eq!(found[0].id, "dQw4w9WgXcQ");
-
-        // Download: progress on both streams, then the path of the saved file.
-        let download_tool = fake_ytdlp(
-            &dir,
-            "download",
-            r#"dir=""; out=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --paths) dir="$2"; shift;;
-    --output) out="$2"; shift;;
-  esac
-  shift
-done
-file="$dir/$(echo "$out" | sed 's/%(ext)s/opus/')"
-echo "mmprog 50 NA 100"
-echo "mmprog 100 100 NA" >&2
-printf 'OggS' > "$file"
-echo "mmfile $file""#,
-        );
-        let seen = std::sync::Mutex::new(Vec::new());
-        let tool = YtDlp::new(&download_tool, "--cookies-from-browser firefox");
-        let path = download(&tool, "dQw4w9WgXcQ", &out, &|p| seen.lock().unwrap().push(p))
-            .await
-            .unwrap();
-        assert_eq!(path, out.join(".multimusic-yt-dQw4w9WgXcQ.opus"));
-        assert_eq!(std::fs::read(&path).unwrap(), b"OggS");
-        let seen = seen.into_inner().unwrap();
-        assert_eq!(seen.first(), Some(&0.485));
-        assert_eq!(seen.last(), Some(&1.0));
-        std::fs::remove_file(&path).unwrap();
-
-        // Failures say why and leave nothing behind.
-        let failing = fake_ytdlp(
-            &dir,
-            "failing",
-            r#"while [ $# -gt 0 ]; do [ "$1" = --paths ] && dir="$2"; shift; done
-touch "$dir/.multimusic-yt-abcdefghijk.webm.part"
-echo "ERROR: [youtube] abcdefghijk: Video unavailable" >&2
-exit 1"#,
-        );
-        let err = download(&YtDlp::new(&failing, ""), "abcdefghijk", &out, &|_| {})
-            .await
-            .unwrap_err();
-        assert_eq!(err.to_string(), "YouTube: Video unavailable");
-        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
-
-        // Not installed.
-        let missing = YtDlp::new("/nonexistent/yt-dlp", "");
-        let err = search(&missing, "x", 1).await.unwrap_err();
-        assert!(err.is::<NotInstalled>());
-        assert!(missing.version().await.unwrap_err().is::<NotInstalled>());
-        let version = fake_ytdlp(&dir, "version", "echo 2026.09.30");
-        assert_eq!(YtDlp::new(&version, "").version().await.unwrap(), "2026.09.30");
-        std::fs::remove_dir_all(dir).unwrap();
+    match visit(http, site, video).await {
+        Ok((v, _)) => {
+            *VISITOR.lock().unwrap() = Some((v.clone(), Instant::now()));
+            v
+        }
+        Err(e) => {
+            warn!("YouTube's watch page: {e:#}");
+            Visitor::default()
+        }
     }
 }
 
-// -------------------------------------------------------------------------------------------
-// Music videos: YouTube videos as songs you play, keep and put in playlists
-// -------------------------------------------------------------------------------------------
+/// The text of `"key":"…"` in a page's scripts.
+fn json_string(page: &str, key: &str) -> Option<String> {
+    let start = page.find(&format!("\"{key}\":\""))? + key.len() + 4;
+    let rest = &page[start..];
+    let end = rest.find('"')?;
+    let value = rest[..end].replace("\\u003d", "=");
+    (!value.is_empty()).then_some(value)
+}
+
+// ---------------------------------------------------------------------------------- search
+
+/// Searches YouTube's videos.
+pub async fn search(http: &reqwest::Client, query: &str, limit: usize) -> Result<Vec<Video>> {
+    search_at(http, &Site::default(), query, limit).await
+}
+
+pub async fn search_at(http: &reqwest::Client, site: &Site, query: &str, limit: usize) -> Result<Vec<Video>> {
+    let known = VISITOR.lock().unwrap().clone().map(|(v, _)| v).unwrap_or_default();
+    let body = json!({ "query": query, "params": VIDEOS_ONLY });
+    let answer = call(http, site, &WEB, &known, "search", body).await?;
+    // A visitor ID from the search does for streams too, until a watch page gives one.
+    if let Some(id) = answer["responseContext"]["visitorData"].as_str() {
+        let mut kept = VISITOR.lock().unwrap();
+        if kept.is_none() {
+            let v = Visitor {
+                id: Some(id.to_string()),
+                cookies: String::new(),
+            };
+            *kept = Some((v, Instant::now()));
+        }
+    }
+    let mut videos = parse_search(&answer);
+    videos.truncate(limit);
+    Ok(videos)
+}
+
+/// The videos in a search answer, in order: the older `videoRenderer`s and the newer
+/// `lockupViewModel`s alike. Live streams (no length) are left out.
+pub fn parse_search(answer: &Value) -> Vec<Video> {
+    let results = answer
+        .pointer("/contents/twoColumnSearchResultsRenderer/primaryContents")
+        .unwrap_or(answer);
+    let mut found = Vec::new();
+    collect_videos(results, &mut found);
+    let mut seen = std::collections::HashSet::new();
+    found
+        .into_iter()
+        .filter(|v| v.duration.is_some() && is_video_id(&v.id) && seen.insert(v.id.clone()))
+        .collect()
+}
+
+fn collect_videos(v: &Value, out: &mut Vec<Video>) {
+    match v {
+        Value::Object(map) => {
+            for (key, value) in map {
+                match key.as_str() {
+                    "videoRenderer" => out.extend(video_renderer(value)),
+                    "lockupViewModel" => out.extend(lockup(value)),
+                    _ => collect_videos(value, out),
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|i| collect_videos(i, out)),
+        _ => {}
+    }
+}
+
+/// `{"simpleText": "…"}` or `{"runs": [{"text": "…"}, …]}`.
+fn text(v: &Value) -> String {
+    if let Some(s) = v["simpleText"].as_str() {
+        return s.to_string();
+    }
+    v["runs"]
+        .as_array()
+        .map(|runs| runs.iter().filter_map(|r| r["text"].as_str()).collect())
+        .unwrap_or_default()
+}
+
+fn video_renderer(r: &Value) -> Option<Video> {
+    let id = r["videoId"].as_str()?.to_string();
+    let channel = [&r["ownerText"], &r["shortBylineText"], &r["longBylineText"]]
+        .into_iter()
+        .map(text)
+        .find(|t| !t.is_empty())
+        .unwrap_or_default();
+    Some(Video {
+        id,
+        title: text(&r["title"]),
+        channel,
+        duration: parse_duration(&text(&r["lengthText"])),
+    })
+}
+
+fn lockup(r: &Value) -> Option<Video> {
+    if r["contentType"].as_str() != Some("LOCKUP_CONTENT_TYPE_VIDEO") {
+        return None;
+    }
+    let meta = &r["metadata"]["lockupMetadataViewModel"];
+    let channel = meta["metadata"]["contentMetadataViewModel"]["metadataRows"]
+        .as_array()
+        .and_then(|rows| rows.first())
+        .and_then(|row| row["metadataParts"].as_array()?.first()?["text"]["content"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut badges = Vec::new();
+    find_badges(&r["contentImage"], &mut badges);
+    Some(Video {
+        id: r["contentId"].as_str()?.to_string(),
+        title: meta["title"]["content"].as_str().unwrap_or("").to_string(),
+        channel,
+        duration: badges.iter().find_map(|b| parse_duration(b)),
+    })
+}
+
+fn find_badges(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::Object(map) => {
+            for (key, value) in map {
+                match (key.as_str(), value["text"].as_str()) {
+                    ("thumbnailBadgeViewModel", Some(t)) => out.push(t.to_string()),
+                    _ => find_badges(value, out),
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|i| find_badges(i, out)),
+        _ => {}
+    }
+}
+
+/// "4:13" or "1:02:03" in seconds.
+fn parse_duration(s: &str) -> Option<f64> {
+    let s = s.trim();
+    if !s.contains(':') {
+        return None;
+    }
+    let mut total = 0u64;
+    for part in s.split(':') {
+        total = total * 60 + part.trim().parse::<u64>().ok()?;
+    }
+    Some(total as f64)
+}
+
+// ---------------------------------------------------------------------------------- player
+
+/// Why a video doesn't play, in plain words.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Refusal {
+    /// Only for signed-in adults.
+    Age,
+    /// YouTube's bot check wants a sign-in from this network.
+    Bot,
+    /// Made for kids: apps can't play it this way.
+    Kids,
+    /// What YouTube said ("This video is private").
+    Said(String),
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Refusal::Age => {
+                f.write_str("YouTube only shows this video to signed-in adults, and Utako doesn't sign in to YouTube")
+            }
+            Refusal::Bot => f.write_str(
+                "YouTube wants this network to sign in before it plays videos (its bot check). Try again in \
+                 a while",
+            ),
+            Refusal::Kids => f.write_str("YouTube doesn't let apps play this video: it's made for kids"),
+            Refusal::Said(why) => write!(f, "YouTube: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+/// Whether a player answer lets the video play, and if not, why.
+pub fn playability(answer: &Value) -> std::result::Result<(), Refusal> {
+    let p = &answer["playabilityStatus"];
+    let status = p["status"].as_str().unwrap_or("");
+    if status == "OK" {
+        return Ok(());
+    }
+    let error = &p["errorScreen"]["playerErrorMessageRenderer"];
+    let reason = [
+        p["reason"].as_str().map(str::to_string).unwrap_or_default(),
+        text(&error["reason"]),
+        text(&error["subreason"]),
+    ]
+    .into_iter()
+    .find(|r| !r.trim().is_empty())
+    .unwrap_or_default();
+    let lower = reason.to_lowercase();
+    if status.starts_with("AGE_")
+        || !p["desktopLegacyAgeGateReason"].is_null()
+        || ["confirm your age", "age-restricted", "inappropriate"]
+            .iter()
+            .any(|s| lower.contains(s))
+    {
+        return Err(Refusal::Age);
+    }
+    if lower.contains("not a bot") {
+        return Err(Refusal::Bot);
+    }
+    if lower.contains("made for kids") {
+        return Err(Refusal::Kids);
+    }
+    Err(Refusal::Said(match (reason.is_empty(), status) {
+        (false, _) => reason,
+        (true, "LIVE_STREAM_OFFLINE") => "this live stream hasn't started".into(),
+        (true, "") => "no answer about this video".into(),
+        (true, s) => format!("this video can't play ({s})"),
+    }))
+}
+
+/// The streams in a player answer that play as they are. Those that need YouTube's JavaScript
+/// (a signature, or an `n` to work out), copy protection, or live pieces are left out.
+pub fn parse_formats(answer: &Value) -> Vec<Format> {
+    let data = &answer["streamingData"];
+    let muxed = data["formats"].as_array().into_iter().flatten();
+    let adaptive = data["adaptiveFormats"].as_array().into_iter().flatten();
+    muxed.chain(adaptive).filter_map(format).collect()
+}
+
+fn format(f: &Value) -> Option<Format> {
+    let url = f["url"].as_str()?;
+    let query = url.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let needs_js = query.split('&').any(|kv| kv.starts_with("n=") || kv.starts_with("s="));
+    if needs_js || !f["drmFamilies"].is_null() || !f["targetDurationSec"].is_null() {
+        return None;
+    }
+    let mime_type = f["mimeType"].as_str()?;
+    let (mime, codecs) = mime_type.split_once(';').unwrap_or((mime_type, ""));
+    let codecs: Vec<String> = codecs
+        .split_once("codecs=")
+        .map(|(_, c)| c.trim_matches(|c: char| c == '"' || c.is_whitespace()))
+        .unwrap_or("")
+        .split(',')
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+    let mime = mime.trim().to_string();
+    let video = mime.starts_with("video/");
+    let audio = mime.starts_with("audio/") || codecs.len() > 1;
+    let num = |k: &str| -> u64 {
+        f[k].as_u64()
+            .or_else(|| f[k].as_str().and_then(|s| s.parse().ok()))
+            .unwrap_or(0)
+    };
+    let track = &f["audioTrack"];
+    Some(Format {
+        itag: num("itag") as u32,
+        url: url.to_string(),
+        mime,
+        codec: codecs.first().cloned().unwrap_or_default(),
+        video,
+        audio,
+        width: num("width") as u32,
+        height: num("height") as u32,
+        fps: num("fps") as f64,
+        bitrate: num("averageBitrate").max(num("bitrate")),
+        size: Some(num("contentLength")).filter(|&n| n > 0),
+        drc: f["isDrc"].as_bool().unwrap_or(false),
+        original: track.is_null()
+            || track["audioIsDefault"].as_bool().unwrap_or(false)
+            || track["displayName"].as_str().is_some_and(|n| n.contains("original")),
+    })
+}
+
+fn is_av1(f: &Format) -> bool {
+    f.codec.starts_with("av01")
+}
+
+fn is_h264(f: &Format) -> bool {
+    f.codec.starts_with("avc1")
+}
+
+/// The sound to play: sound only, in the video's own language, the best there is; else a
+/// stream with both.
+pub fn pick_sound(formats: &[Format]) -> Option<&Format> {
+    let sound_only = || formats.iter().filter(|f| f.audio && !f.video && !f.drc);
+    let rank = |f: &&Format| (f.bitrate, f.codec == "opus");
+    sound_only()
+        .filter(|f| f.original)
+        .max_by_key(rank)
+        .or_else(|| sound_only().max_by_key(rank))
+        .or_else(|| formats.iter().filter(|f| f.audio && f.video).max_by_key(rank))
+}
+
+/// The picture for the centre panel: up to 720p (the panel is never much bigger), not AV1
+/// (older computers can't decode it smoothly) when there's another.
+pub fn pick_picture(formats: &[Format]) -> Option<&Format> {
+    let pictures: Vec<&Format> = formats.iter().filter(|f| f.video && f.height > 0).collect();
+    let usable: Vec<&Format> = if pictures.iter().any(|f| !is_av1(f)) {
+        pictures.into_iter().filter(|f| !is_av1(f)).collect()
+    } else {
+        pictures
+    };
+    usable
+        .iter()
+        .filter(|f| f.height <= 720)
+        .max_by_key(|f| (f.height, f.fps as u32, !f.audio, is_h264(f), f.bitrate))
+        .or_else(|| usable.iter().min_by_key(|f| f.height))
+        .copied()
+}
+
+/// What a download is made of: a picture and a sound to put together, or one stream with both.
+#[derive(Debug, PartialEq)]
+pub struct Plan<'a> {
+    pub picture: &'a Format,
+    pub sound: Option<&'a Format>,
+    /// "mp4" or "mkv".
+    pub container: &'static str,
+}
+
+/// The best picture up to 1080p and the best sound: H.264 with AAC (an MP4 that plays
+/// everywhere) when YouTube has them, else whatever is best in an MKV.
+pub fn plan_download(formats: &[Format]) -> Option<Plan<'_>> {
+    let pictures: Vec<&Format> = formats
+        .iter()
+        .filter(|f| f.video && !f.audio && f.height > 0 && f.height <= 1080)
+        .collect();
+    let sounds: Vec<&Format> = formats.iter().filter(|f| f.audio && !f.video && !f.drc).collect();
+    let best_sound = |aac: bool| {
+        let pick = |own: bool| {
+            sounds
+                .iter()
+                .filter(|f| (!aac || f.codec.starts_with("mp4a")) && (!own || f.original))
+                .max_by_key(|f| f.bitrate)
+                .copied()
+        };
+        pick(true).or_else(|| pick(false))
+    };
+    let h264 = pictures
+        .iter()
+        .filter(|f| is_h264(f))
+        .max_by_key(|f| (f.height, f.fps as u32, f.bitrate));
+    if let (Some(picture), Some(sound)) = (h264, best_sound(true)) {
+        return Some(Plan {
+            picture,
+            sound: Some(sound),
+            container: "mp4",
+        });
+    }
+    // AV1 only when there's nothing else: older computers and TVs can't play it smoothly.
+    let picture = pictures
+        .iter()
+        .max_by_key(|f| (!is_av1(f), f.height, f.fps as u32, f.bitrate))
+        .copied();
+    if let (Some(picture), Some(sound)) = (picture, best_sound(false)) {
+        return Some(Plan {
+            picture,
+            sound: Some(sound),
+            container: "mkv",
+        });
+    }
+    // Only streams with both (itag 18, 360p MP4).
+    formats
+        .iter()
+        .filter(|f| f.video && f.audio)
+        .max_by_key(|f| (f.height, f.bitrate))
+        .map(|picture| Plan {
+            picture,
+            sound: None,
+            container: if picture.mime.ends_with("mp4") { "mp4" } else { "mkv" },
+        })
+}
+
+/// Seconds YouTube makes an app wait before a video plays: the ads it would show first, as
+/// yt-dlp works them out (until an ad may be skipped, or its whole length).
+pub fn wait_seconds(answer: &Value) -> u64 {
+    let mut total = 0.0;
+    for ad in answer["adPlacements"].as_array().into_iter().flatten() {
+        let r = &ad["adPlacementRenderer"];
+        if r["config"]["adPlacementConfig"]["kind"].as_str() == Some("AD_PLACEMENT_KIND_START") {
+            total += ad_length(&r["renderer"]["instreamVideoAdRenderer"]);
+        }
+    }
+    total.ceil() as u64
+}
+
+fn ad_length(r: &Value) -> f64 {
+    if let Some(skip) = r["skipOffsetMilliseconds"].as_f64() {
+        return skip / 1000.0;
+    }
+    r["playerVars"]
+        .as_str()
+        .and_then(|vars| vars.split('&').find_map(|kv| kv.strip_prefix("length_seconds=")))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0.0)
+}
+
+/// "vp09.00.40.08" → "VP9", "avc1.4d401f" → "H.264".
+fn codec_name(codec: &str) -> &str {
+    match codec.split('.').next().unwrap_or("") {
+        "vp09" | "vp9" => "VP9",
+        "avc1" | "h264" => "H.264",
+        "av01" => "AV1",
+        "hev1" | "hvc1" => "HEVC",
+        _ => "Video",
+    }
+}
+
+fn label(f: &Format) -> String {
+    match f.height {
+        0 => codec_name(&f.codec).to_string(),
+        h => format!("{} {h}p", codec_name(&f.codec)),
+    }
+}
+
+fn link(url: &str) -> Link {
+    Link {
+        url: url.to_string(),
+        user_agent: Some(VISIONOS.user_agent.to_string()),
+        headers: Vec::new(),
+    }
+}
+
+/// The player answer for video `id`. A bot check is tried once more as a new visitor.
+async fn player(http: &reqwest::Client, site: &Site, id: &str) -> Result<Value> {
+    if !is_video_id(id) {
+        bail!("not a YouTube video");
+    }
+    let body = json!({
+        "videoId": id,
+        "contentCheckOk": true,
+        "racyCheckOk": true,
+        "playbackContext": { "contentPlaybackContext": { "html5Preference": "HTML5_PREF_WANTS" } },
+    });
+    let mut fresh = false;
+    loop {
+        let who = visitor(http, site, id, fresh).await;
+        let answer = call(http, site, &VISIONOS, &who, "player", body.clone()).await?;
+        match playability(&answer) {
+            Ok(()) => return Ok(answer),
+            Err(Refusal::Bot) if !fresh => fresh = true,
+            Err(Refusal::Said(why)) => {
+                // "Made for kids" shows on the video's watch page rather than in the answer.
+                let kids = visit(http, site, id)
+                    .await
+                    .is_ok_and(|(_, page)| page.contains("made for kids"));
+                return Err(if kids { Refusal::Kids } else { Refusal::Said(why) }.into());
+            }
+            Err(refusal) => return Err(refusal.into()),
+        }
+    }
+}
+
+/// Video `id`'s sound and picture.
+pub async fn streams(http: &reqwest::Client, id: &str) -> Result<Streams> {
+    streams_at(http, &Site::default(), id).await
+}
+
+pub async fn streams_at(http: &reqwest::Client, site: &Site, id: &str) -> Result<Streams> {
+    let answer = player(http, site, id).await?;
+    let formats = parse_formats(&answer);
+    let sound = pick_sound(&formats).ok_or_else(|| anyhow!("YouTube gave no stream of this video Utako can play"))?;
+    let picture = pick_picture(&formats).map(|f| VideoLink {
+        link: link(&f.url),
+        width: f.width,
+        height: f.height,
+        fps: f.fps,
+        label: label(f),
+    });
+    Ok(Streams {
+        sound: link(&sound.url),
+        picture,
+        wait: wait_seconds(&answer),
+    })
+}
+
+/// mpv's options for a stream: the User-Agent it was made for.
+pub fn mpv_options(link: &Link) -> Vec<(&'static str, String)> {
+    link.user_agent
+        .iter()
+        .map(|agent| ("user-agent", agent.clone()))
+        .collect()
+}
+
+// -------------------------------------------------------------------------------- download
+
+/// Pieces a stream is fetched in (yt-dlp's size: YouTube slows down bigger requests).
+const PIECE: u64 = 10 << 20;
+
+/// Saves video `id` (picture and sound) in `dir`, with `meta`'s title and artist.
+pub async fn download(
+    http: &reqwest::Client,
+    id: &str,
+    meta: &Metadata,
+    dir: &Path,
+    progress: &(dyn Fn(f32) + Send + Sync),
+) -> Result<Saved> {
+    download_at(http, &Site::default(), id, meta, dir, progress).await
+}
+
+pub async fn download_at(
+    http: &reqwest::Client,
+    site: &Site,
+    id: &str,
+    meta: &Metadata,
+    dir: &Path,
+    progress: &(dyn Fn(f32) + Send + Sync),
+) -> Result<Saved> {
+    let answer = player(http, site, id).await?;
+    let wait = wait_seconds(&answer);
+    if wait > 0 {
+        info!("YouTube makes {id} wait {wait} s");
+        tokio::time::sleep(Duration::from_secs(wait)).await;
+    }
+    let formats = parse_formats(&answer);
+    let plan = plan_download(&formats).ok_or_else(|| anyhow!("YouTube gave no stream of this video Utako can save"))?;
+    let label = format!("YouTube, {}", label(plan.picture));
+    let parts: Vec<&Format> = std::iter::once(plan.picture).chain(plan.sound).collect();
+    let total = parts.iter().map(|f| f.size.unwrap_or(0)).sum::<u64>().max(1);
+    let mut done = 0u64;
+    let mut files = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        let file = dir.join(format!("part{i}"));
+        let before = done;
+        let shown = |n: u64| progress((0.97 * (before + n) as f32 / total as f32).min(0.97));
+        let what = if part.video { "its picture" } else { "its sound" };
+        done += fetch(http, &part.url, part.size, &file, &shown)
+            .await
+            .with_context(|| format!("couldn't download {what} from YouTube"))?;
+        files.push(file);
+    }
+    let out = dir.join(format!("video.{}", plan.container));
+    join(&files, &out, meta).await?;
+    for f in files {
+        let _ = tokio::fs::remove_file(f).await;
+    }
+    progress(1.0);
+    Ok(Saved { path: out, label })
+}
+
+/// Downloads `url` into `file`, in pieces when its size is known; returns how much came.
+async fn fetch(
+    http: &reqwest::Client,
+    url: &str,
+    size: Option<u64>,
+    file: &Path,
+    progress: &(dyn Fn(u64) + Send + Sync),
+) -> Result<u64> {
+    use tokio::io::AsyncWriteExt;
+    let mut out = tokio::fs::File::create(file).await?;
+    let mut have = 0u64;
+    loop {
+        let mut req = http
+            .get(url)
+            .header(reqwest::header::USER_AGENT, VISIONOS.user_agent)
+            .timeout(Duration::from_secs(600));
+        if size.is_some() {
+            req = req.header(reqwest::header::RANGE, format!("bytes={have}-{}", have + PIECE - 1));
+        }
+        let mut resp = req.send().await?.error_for_status()?;
+        let mut got = 0u64;
+        loop {
+            let chunk = tokio::time::timeout(Duration::from_secs(60), resp.chunk())
+                .await
+                .map_err(|_| anyhow!("YouTube stopped sending"))??;
+            let Some(chunk) = chunk else { break };
+            out.write_all(&chunk).await?;
+            got += chunk.len() as u64;
+            progress(have + got);
+        }
+        have += got;
+        match size {
+            Some(total) if have < total && got > 0 => continue,
+            Some(total) if have < total => bail!("YouTube sent {have} of {total} bytes"),
+            _ => break,
+        }
+    }
+    out.flush().await?;
+    Ok(have)
+}
+
+/// Puts a picture and a sound into one file as they are (nothing is converted), with the
+/// song's title and artist.
+async fn join(parts: &[PathBuf], out: &Path, meta: &Metadata) -> Result<()> {
+    let mut cmd = crate::tools::command(crate::tools::resolve("ffmpeg", "ffmpeg"));
+    cmd.args(["-v", "error", "-y"]);
+    for p in parts {
+        cmd.arg("-i").arg(p);
+    }
+    cmd.args([
+        "-map",
+        "0:v:0",
+        "-map",
+        if parts.len() > 1 { "1:a:0" } else { "0:a:0?" },
+    ]);
+    cmd.args(["-c", "copy"]);
+    if out.extension().is_some_and(|e| e == "mp4") {
+        cmd.args(["-movflags", "+faststart"]);
+    }
+    for (key, value) in [("title", &meta.title), ("artist", &meta.artist), ("comment", &meta.url)] {
+        if !value.trim().is_empty() {
+            cmd.arg("-metadata").arg(format!("{key}={}", value.trim()));
+        }
+    }
+    let output = cmd
+        .arg(out)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => anyhow!("saving music videos needs ffmpeg"),
+            _ => anyhow!("couldn't run ffmpeg: {e}"),
+        })?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        bail!("ffmpeg couldn't put the video together: {}", err.trim());
+    }
+    Ok(())
+}
+
+// -------------------------------------------------------------------------- videos as songs
 
 /// What music videos add to a song's name, cut from the title Utako shows.
 const VIDEO_DECORATIONS: &[&str] = &[
@@ -881,277 +996,5 @@ fn strip_decorations(title: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// A link and what to send with it: the User-Agent and the few headers the link was made
-/// for (Referer, Cookie, X-Forwarded-For), as mpv's own youtube-dl support sends them.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Link {
-    pub url: String,
-    pub user_agent: Option<String>,
-    pub headers: Vec<(String, String)>,
-}
-
-/// A music video's picture, for the player in the app's centre panel.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct VideoLink {
-    pub link: Link,
-    pub width: u32,
-    pub height: u32,
-    pub fps: f64,
-    /// "VP9 720p"
-    pub label: String,
-}
-
-/// The picture only (mpv plays the sound itself), up to 720p (the centre panel is never much
-/// bigger) and not AV1, which older computers can't decode smoothly. Never DASH: ffmpeg can't
-/// open those pieces as one link (former livestreams have nothing else, and play without one).
-const PICTURE_FORMAT: &str = "bv[height<=?720][vcodec!^=av01][protocol!*=dash]/\
-                              bv[height<=?720][protocol!*=dash]/b[height<=?720][protocol!*=dash]/\
-                              bv[protocol!*=dash]/b[protocol!*=dash]";
-
-/// The link mpv plays a music video's sound from: mpv's own YouTube support (its ytdl hook)
-/// runs yt-dlp for it, which handles every kind of stream YouTube gives out.
-pub fn mpv_link(id: &str) -> String {
-    format!("ytdl://{}", watch_url(id))
-}
-
-/// mpv's `ytdl-raw-options` for that: the JavaScript runtime found and the extra options from
-/// Settings (`--cookies-from-browser firefox` → `cookies-from-browser=firefox`).
-pub fn mpv_raw_options(js: &JsRuntime, extra: &[String]) -> String {
-    let mut args: Vec<String> = match js {
-        JsRuntime::Found(args) => args.clone(),
-        _ => Vec::new(),
-    };
-    args.extend(extra.iter().cloned());
-    let mut pairs = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        let Some(name) = args[i].strip_prefix("--").filter(|n| !n.is_empty()) else {
-            i += 1;
-            continue;
-        };
-        let value = args.get(i + 1).filter(|v| !v.starts_with("--"));
-        i += if value.is_some() { 2 } else { 1 };
-        let value = value.map(String::as_str).unwrap_or("");
-        // A comma would split mpv's list.
-        if !value.contains(',') {
-            pairs.push(format!("{name}={value}"));
-        }
-    }
-    pairs.join(",")
-}
-
-/// yt-dlp's error as mpv logged it ("ERROR: [youtube] id: Sign in to confirm your age"), in
-/// plain words.
-pub fn explain_problem(text: &str) -> String {
-    let why = explain(&last_error(text));
-    if js_runtime_missing() {
-        format!("{why} ({})", js_runtime_hint())
-    } else {
-        why
-    }
-}
-
-/// Looks up video `id`'s picture for the player in the centre panel (`None`: no stream the
-/// app can draw).
-pub async fn picture(ytdlp: &YtDlp, id: &str) -> Result<Option<VideoLink>> {
-    if !is_video_id(id) {
-        bail!("not a YouTube video");
-    }
-    js_runtime(ytdlp).await;
-    let mut cmd = ytdlp.command();
-    cmd.args(["--no-playlist", "--dump-single-json", "--format", PICTURE_FORMAT])
-        .arg(watch_url(id))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let out = tokio::time::timeout(Duration::from_secs(45), cmd.output())
-        .await
-        .map_err(|_| anyhow!("YouTube didn't answer in time"))?
-        .map_err(spawn_error)?;
-    if !out.status.success() {
-        bail!("{}", explain_problem(&String::from_utf8_lossy(&out.stderr)));
-    }
-    parse_picture(&out.stdout)
-}
-
-pub fn parse_picture(json: &[u8]) -> Result<Option<VideoLink>> {
-    let v: Value = serde_json::from_slice(json).context("unexpected output from yt-dlp")?;
-    // One format picked, or (from an older selection) the picture first of two.
-    let format = v
-        .get("requested_formats")
-        .and_then(Value::as_array)
-        .and_then(|f| f.first())
-        .unwrap_or(&v);
-    let has_video = format
-        .get("vcodec")
-        .and_then(Value::as_str)
-        .is_some_and(|c| c != "none");
-    let dash = format
-        .get("protocol")
-        .and_then(Value::as_str)
-        .is_some_and(|p| p.contains("dash"));
-    if !has_video || dash {
-        return Ok(None);
-    }
-    let Some(link) = link_of(format) else { return Ok(None) };
-    let num = |k: &str| format.get(k).and_then(Value::as_f64).unwrap_or(0.0);
-    let (width, height) = (num("width") as u32, num("height") as u32);
-    let codec = codec_name(format.get("vcodec").and_then(Value::as_str).unwrap_or(""));
-    Ok(Some(VideoLink {
-        link,
-        width,
-        height,
-        fps: num("fps"),
-        label: match height {
-            0 => codec.to_string(),
-            h => format!("{codec} {h}p"),
-        },
-    }))
-}
-
-fn link_of(format: &Value) -> Option<Link> {
-    let url = format.get("url").and_then(Value::as_str)?.to_string();
-    let headers = format.get("http_headers").and_then(Value::as_object);
-    let header = |name: &str| {
-        headers
-            .and_then(|h| h.get(name))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-    Some(Link {
-        url,
-        user_agent: header("User-Agent"),
-        headers: ["Referer", "Cookie", "X-Forwarded-For"]
-            .into_iter()
-            .filter_map(|name| header(name).map(|v| (name.to_string(), v)))
-            .collect(),
-    })
-}
-
-/// "vp09.00.40.08" → "VP9", "avc1.4d401f" → "H.264".
-fn codec_name(codec: &str) -> &str {
-    match codec.split('.').next().unwrap_or("") {
-        "vp09" | "vp9" => "VP9",
-        "avc1" | "h264" => "H.264",
-        "av01" => "AV1",
-        "hev1" | "hvc1" => "HEVC",
-        _ => "Video",
-    }
-}
-
 #[cfg(test)]
-mod video_tests {
-    use super::*;
-
-    fn video(title: &str, channel: &str) -> Video {
-        Video {
-            id: "dQw4w9WgXcQ".into(),
-            title: title.into(),
-            channel: channel.into(),
-            duration: Some(213.0),
-            description: String::new(),
-        }
-    }
-
-    #[test]
-    fn music_video_titles() {
-        let t = video_track(&video(
-            "Rick Astley - Never Gonna Give You Up (Official Music Video)",
-            "Rick Astley",
-        ));
-        assert_eq!(
-            (t.artist.as_str(), t.title.as_str()),
-            ("Rick Astley", "Never Gonna Give You Up")
-        );
-        assert_eq!(t.id, "youtube:dQw4w9WgXcQ");
-        assert_eq!(t.duration_ms, 213_000);
-        assert_eq!(t.uri, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-        assert!(t.art.unwrap().contains("dQw4w9WgXcQ"));
-        // No "artist - title": the channel is the artist; brackets that aren't decorations stay.
-        let t = video_track(&video("Blinding Lights [Lyrics] (Remix)", "The Weeknd - Topic"));
-        assert_eq!(
-            (t.artist.as_str(), t.title.as_str()),
-            ("The Weeknd", "Blinding Lights (Remix)")
-        );
-        let t = video_track(&video("Dua Lipa – Houdini (Official Video)", "DuaLipaVEVO"));
-        assert_eq!((t.artist.as_str(), t.title.as_str()), ("Dua Lipa", "Houdini"));
-    }
-
-    #[test]
-    fn video_ids() {
-        assert_eq!(video_id("youtube:dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
-        assert_eq!(video_id("youtube:../etc/pass"), None);
-        assert_eq!(video_id("spotify:track:x"), None);
-    }
-
-    #[test]
-    fn pictures() {
-        // One stream with both: its picture.
-        let both = br#"{"url": "https://a.example/x?b=1,2", "vcodec": "avc1.42001E", "height": 360, "width": 640,
-            "protocol": "https", "http_headers": {"User-Agent": "UA", "Referer": "https://www.youtube.com/", "Accept": "a,b"}}"#;
-        let v = parse_picture(both).unwrap().unwrap();
-        assert_eq!(v.link.url, "https://a.example/x?b=1,2");
-        assert_eq!(v.link.user_agent.as_deref(), Some("UA"));
-        // Only the headers mpv's own youtube-dl support sends (no comma lists like Accept).
-        assert_eq!(
-            v.link.headers,
-            vec![("Referer".to_string(), "https://www.youtube.com/".to_string())]
-        );
-        assert_eq!((v.width, v.height, v.label.as_str()), (640, 360, "H.264 360p"));
-        let picture = br#"{"url": "https://v.example/v", "vcodec": "vp09.00.40.08", "acodec": "none",
-            "width": 1280, "height": 720, "fps": 30, "protocol": "m3u8_native"}"#;
-        let v = parse_picture(picture).unwrap().unwrap();
-        assert_eq!(
-            (v.width, v.height, v.fps, v.label.as_str()),
-            (1280, 720, 30.0, "VP9 720p")
-        );
-        // Sound only, or DASH pieces: nothing to draw.
-        assert!(parse_picture(br#"{"url": "https://a.example/a", "vcodec": "none"}"#)
-            .unwrap()
-            .is_none());
-        let dash = br#"{"url": "https://v.example/manifest", "vcodec": "avc1", "protocol": "http_dash_segments"}"#;
-        assert!(parse_picture(dash).unwrap().is_none());
-        assert!(parse_picture(b"not json").is_err());
-    }
-
-    #[test]
-    fn mpv_options() {
-        assert_eq!(
-            mpv_link("dQw4w9WgXcQ"),
-            "ytdl://https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        );
-        let js = JsRuntime::Found(vec!["--js-runtimes".into(), "deno:/usr/bin/deno".into()]);
-        let extra = split_args("--cookies-from-browser firefox --no-check-certificates --x a,b");
-        assert_eq!(
-            mpv_raw_options(&js, &extra),
-            "js-runtimes=deno:/usr/bin/deno,cookies-from-browser=firefox,no-check-certificates="
-        );
-        assert_eq!(mpv_raw_options(&JsRuntime::Missing, &[]), "");
-        assert_eq!(
-            explain_problem("ERROR: [youtube] dQw4w9WgXcQ: Private video"),
-            "Private video"
-        );
-        // Age-restricted: what to do about it.
-        assert!(
-            explain_problem("ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm your age")
-                .contains("--cookies-from-browser")
-        );
-    }
-
-    #[test]
-    fn js_runtimes() {
-        let none = |_: &str| None;
-        assert_eq!(js_runtime_for(false, none), JsRuntime::NotNeeded);
-        assert_eq!(js_runtime_for(true, none), JsRuntime::Missing);
-        // Deno first, then the others in yt-dlp's order.
-        let node_only = |p: &str| (p == "node").then(|| PathBuf::from("/usr/bin/node"));
-        assert_eq!(
-            js_runtime_for(true, node_only),
-            JsRuntime::Found(vec!["--js-runtimes".into(), "node:/usr/bin/node".into()])
-        );
-        let both = |p: &str| matches!(p, "node" | "deno").then(|| PathBuf::from(format!("/x/{p}")));
-        assert_eq!(
-            js_runtime_for(true, both),
-            JsRuntime::Found(vec!["--js-runtimes".into(), "deno:/x/deno".into()])
-        );
-    }
-}
+mod tests;

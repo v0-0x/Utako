@@ -302,14 +302,6 @@ pub(super) fn playlist(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, id: &str) {
             play_list(cx, &tracks, shuffle, &p.name);
         }
         widgets::paste_shortcut(ui, cx, p);
-        if p.kind == PlaylistKind::AppleMusic {
-            ui.label(
-                egui::RichText::new("Apple Music songs play from your local files, Spotify or SoundCloud")
-                    .small()
-                    .color(pal().text_faint),
-            );
-            ui.add_space(4.0);
-        }
         if no_matches(ui, tracks.len(), st.filter_text) {
             return;
         }

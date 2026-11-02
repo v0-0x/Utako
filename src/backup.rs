@@ -37,9 +37,15 @@ pub struct SettingsFile {
     /// themselves once you are logged in).
     #[serde(default)]
     pub playlists: Vec<Playlist>,
-    /// The songs in `playlists`.
-    #[serde(default)]
+    /// The songs in `playlists`. A song this version can't play (an Apple Music import from an
+    /// older one) is left out rather than failing the whole file.
+    #[serde(default, deserialize_with = "known_tracks")]
     pub tracks: Vec<Track>,
+}
+
+fn known_tracks<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<Track>, D::Error> {
+    let raw: Vec<serde_json::Value> = Deserialize::deserialize(d)?;
+    Ok(raw.into_iter().filter_map(|t| serde_json::from_value(t).ok()).collect())
 }
 
 /// What goes into an exported file besides the settings.
@@ -50,13 +56,11 @@ pub struct Include {
 }
 
 /// Every key, token and account name in the settings.
-fn key_fields(c: &mut Config) -> [&mut String; 10] {
+fn key_fields(c: &mut Config) -> [&mut String; 8] {
     [
         &mut c.spotify.web_api_client_id,
         &mut c.spotify.web_api_client_secret,
         &mut c.soundcloud.oauth_token,
-        &mut c.apple_music.developer_token,
-        &mut c.apple_music.user_token,
         &mut c.lastfm.api_key,
         &mut c.lastfm.api_secret,
         &mut c.lastfm.session_key,
@@ -171,10 +175,10 @@ pub fn is_settings_file(path: &Path) -> bool {
 }
 
 /// The imported settings, adjusted for this computer: library and download folders that don't
-/// exist here, the mpv and yt-dlp programs and the audio devices stay as they are. A file
-/// without keys keeps the keys and logins you have. What decides which programs run (yt-dlp's
-/// extra options) and where updates come from is never taken from a file: one someone sends
-/// could otherwise run their commands or install their build.
+/// exist here, the mpv program and the audio devices stay as they are. A file without keys
+/// keeps the keys and logins you have. Which programs run and where updates come from is never
+/// taken from a file: one someone sends could otherwise run their commands or install their
+/// build.
 pub fn merge_config(current: &Config, imported: &SettingsFile) -> Config {
     let mut cfg = imported.config.clone();
     if !imported.has_keys {
@@ -201,8 +205,6 @@ pub fn merge_config(current: &Config, imported: &SettingsFile) -> Config {
     }
     cfg.playback.mpv_path = current.playback.mpv_path.clone();
     cfg.playback.audio_device = current.playback.audio_device.clone();
-    cfg.downloads.ytdlp_path = current.downloads.ytdlp_path.clone();
-    cfg.downloads.ytdlp_args = current.downloads.ytdlp_args.clone();
     cfg.spotify.audio_output = current.spotify.audio_output.clone();
     cfg.updates = current.updates.clone();
     cfg
@@ -425,7 +427,6 @@ mod tests {
         from.downloads.folder = "/home/someone/nowhere/dl".into();
         from.playback.mpv_path = "/usr/bin/mpv".into();
         from.playback.volume = 33.0;
-        from.downloads.ytdlp_args = "--exec 'touch /tmp/owned'".into();
         from.updates.repo = "someone/fake-sumo".into();
         from.updates.check = false;
         let file = SettingsFile {
@@ -447,7 +448,6 @@ mod tests {
         assert_eq!(cfg.downloads.folder, "");
         assert_eq!(cfg.playback.mpv_path, current.playback.mpv_path);
         // Nothing in a file decides which commands run or where updates come from.
-        assert_eq!(cfg.downloads.ytdlp_args, current.downloads.ytdlp_args);
         assert_eq!(cfg.updates, current.updates);
 
         // A file without keys keeps yours.
@@ -505,6 +505,30 @@ mod tests {
         assert_eq!(playlists[0].track_ids, vec!["spotify:track:1", "spotify:track:2"]);
         assert_eq!(playlists[1].id, "custom:new");
         assert_eq!(playlists[1].track_ids, vec!["spotify:track:2"]);
+    }
+
+    /// A file from an older version with Apple Music songs in it still reads; those songs are
+    /// left out.
+    #[test]
+    fn old_files_with_apple_music_songs() {
+        let file = SettingsFile {
+            multimusic_settings: FORMAT,
+            app_version: "0.9.7".into(),
+            created_at: 0,
+            platform: "linux".into(),
+            config: Config::default(),
+            has_keys: false,
+            logins: BTreeMap::new(),
+            playlists: Vec::new(),
+            tracks: vec![track("spotify:track:2", Source::Spotify, "")],
+        };
+        let mut json: serde_json::Value = serde_json::to_value(&file).unwrap();
+        let mut apple = json["tracks"][0].clone();
+        apple["id"] = "applemusic:1".into();
+        apple["source"] = "AppleMusic".into();
+        json["tracks"].as_array_mut().unwrap().push(apple);
+        let back: SettingsFile = serde_json::from_value(json).unwrap();
+        assert_eq!(back.tracks, file.tracks);
     }
 
     #[test]

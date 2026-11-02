@@ -26,10 +26,9 @@ use crate::model::{
 use crate::player::mpv::{Mpv, MpvEvent, MpvOptions, MpvSender};
 use crate::player::queue::{Queue, QueueState};
 use crate::player::spotify::{self, SpotifyAuth, SpotifyDeck, SpotifyEngine, SpotifyEvent, SpotifySender};
-use crate::providers::apple_music::{self, AppleMusicApi};
 use crate::providers::soundcloud::{self, ScResolved, ScUser, SoundCloud};
 use crate::providers::spotify_api::{self, SpotifyApi, SpotifyPlaylistMeta};
-use crate::providers::youtube::{self, YtDlp};
+use crate::providers::youtube;
 
 mod downloads;
 mod pages;
@@ -147,8 +146,6 @@ pub enum Command {
         playlist_id: String,
         path: PathBuf,
     },
-    ImportAppleXml(PathBuf),
-    ImportAppleApi,
     /// Connects to the media server again (after its address changed, say).
     ServerConnect,
     /// Gives the media server this device's settings and logins.
@@ -197,9 +194,9 @@ pub enum Command {
     Search(String),
     /// Load an artist / album / playlist / song page: a page key or a pasted link.
     OpenPage(String),
-    /// Save songs as files: SoundCloud songs directly, Spotify songs from Spotify itself, Apple
-    /// Music songs from a matching YouTube or SoundCloud upload. They go to the media
-    /// server instead when that's on in Settings and it's connected.
+    /// Save songs as files: SoundCloud songs directly, Spotify songs from Spotify itself (or a
+    /// matching SoundCloud upload), music videos as video files. They go to the media server
+    /// instead when that's on in Settings and it's connected.
     Download(Vec<Track>),
     /// Remove finished and failed entries from the Downloads list.
     ClearDownloads,
@@ -207,8 +204,6 @@ pub enum Command {
     CancelDownload(String),
     /// Stop every waiting and running download.
     CancelDownloads,
-    /// Find out whether this yt-dlp program runs (answer in `Feed::ytdlp`).
-    CheckYtDlp(String),
     UpdateConfig(Box<Config>),
     Raise,
     Quit,
@@ -242,7 +237,7 @@ pub enum PlayStatus {
 #[derive(Debug, Clone)]
 pub struct PlayerView {
     pub current: Option<Track>,
-    /// The track actually playing when `current` had to be resolved (Apple Music imports).
+    /// The track actually playing when it isn't `current` itself.
     pub via: Option<Track>,
     pub status: PlayStatus,
     pub position: f64,
@@ -332,7 +327,7 @@ pub struct SearchState {
     pub query: String,
     pub spotify: Vec<Track>,
     pub soundcloud: Vec<Track>,
-    /// Music videos from YouTube (through yt-dlp).
+    /// Music videos from YouTube.
     pub youtube: Vec<Track>,
     /// Spotify artists and SoundCloud profiles, best matches first.
     pub artists: Vec<ArtistHit>,
@@ -430,8 +425,6 @@ pub struct Feed {
     pub downloads: Vec<DownloadItem>,
     /// Downloaded songs: track id → file.
     pub downloaded: HashMap<String, PathBuf>,
-    /// The yt-dlp program last checked, and its version or why it doesn't run.
-    pub ytdlp: Option<(String, Result<String, String>)>,
     pub spotify: AccountStatus,
     /// True while a Spotify login is stored, whatever the current status message says.
     pub spotify_logged_in: bool,
@@ -547,16 +540,6 @@ enum Internal {
         /// A music video's picture, drawn by the app while mpv plays the sound.
         video: Option<Arc<crate::providers::youtube::VideoLink>>,
     },
-    /// A music video's picture, found after its sound started.
-    VideoReady {
-        seq: u64,
-        video: Option<Arc<crate::providers::youtube::VideoLink>>,
-    },
-    Resolved {
-        seq: u64,
-        original: Track,
-        resolved: Option<Track>,
-    },
     LoadFailed {
         seq: u64,
         error: String,
@@ -564,7 +547,6 @@ enum Internal {
     SpotifyReady(Result<SpotifyEngine>),
     SpotifySynced(Result<SpotifySync>),
     SoundCloudSynced(Result<SoundCloudSync>),
-    AppleImported(Result<(Vec<Track>, Vec<ImportedPlaylist>)>),
     M3uImported(Result<ImportedPlaylist>),
     LinksResolved {
         playlist_id: String,
@@ -644,10 +626,6 @@ enum Internal {
         track: Track,
         result: Result<Saved>,
     },
-    YtDlpChecked {
-        program: String,
-        result: Result<String, String>,
-    },
     /// Status text while the Spotify library syncs.
     SyncProgress(String),
 }
@@ -667,7 +645,7 @@ const MAX_LYRICS_CACHE: u64 = 40 << 20;
 const GITHUB_API: &str = "https://api.github.com";
 
 /// Bumped when the scanner learns to read more from files, so the library is read once again.
-const SCAN_VERSION: &str = "3";
+const SCAN_VERSION: &str = "4";
 
 /// How often crossfade timing is checked and volumes are stepped.
 const FADE_STEP: Duration = Duration::from_millis(50);
@@ -768,13 +746,14 @@ pub struct Service {
     position: f64,
     position_at: Instant,
     duration: f64,
-    /// Playable track for the current queue entry (differs for resolved imports).
+    /// Playable track for the current queue entry.
     playing: Option<Track>,
     quality: Option<AudioQuality>,
     /// The picture of the music video playing (drawn by the UI).
     video: Option<Arc<crate::providers::youtube::VideoLink>>,
-    /// yt-dlp's error for the music video loading, as mpv logged it.
-    ytdl_problem: Option<String>,
+    /// What mpv was last asked to play, and what was sent with it: where a video file's picture
+    /// comes from.
+    mpv_link: Option<youtube::Link>,
     load_seq: u64,
     started_reported: bool,
     resume_position: Option<f64>,
@@ -841,8 +820,6 @@ pub struct Service {
     retried_load: u64,
     /// Recently loaded pages, so going back doesn't reload them.
     page_cache: Vec<PageState>,
-    /// Apple Music developer token (from the settings, or scraped once).
-    apple_dev_token: Arc<tokio::sync::Mutex<Option<String>>>,
 
     soundcloud: Arc<SoundCloud>,
     lyrics: Arc<LyricsFetcher>,
@@ -964,7 +941,7 @@ impl Service {
             playing: None,
             quality: None,
             video: None,
-            ytdl_problem: None,
+            mpv_link: None,
             load_seq: 0,
             started_reported: false,
             resume_position: None,
@@ -1005,7 +982,6 @@ impl Service {
             loading_since: None,
             retried_load: 0,
             page_cache: Vec::new(),
-            apple_dev_token: Arc::new(tokio::sync::Mutex::new(None)),
             soundcloud,
             lyrics,
             lastfm,
@@ -1409,15 +1385,6 @@ impl Service {
                     Err(e) => self.shared.error(format!("Export failed: {e:#}")),
                 }
             }
-            Command::ImportAppleXml(path) => {
-                self.shared.info("Importing Apple Music library…");
-                let tx = self.internal_tx.clone();
-                tokio::task::spawn_blocking(move || {
-                    let r = apple_music::import_library_xml(&path).map(|l| (l.tracks, l.playlists));
-                    let _ = tx.send(Internal::AppleImported(r));
-                });
-            }
-            Command::ImportAppleApi => self.import_apple_api(),
             Command::ExportSettings { path, include } => self.export_settings(&path, include),
             Command::ImportSettings(path) => self.import_settings(&path),
             Command::ServerConnect => self.server_connect(),
@@ -1494,19 +1461,6 @@ impl Service {
             }
             Command::CancelDownload(id) => self.cancel_downloads(Some(&id)),
             Command::CancelDownloads => self.cancel_downloads(None),
-            Command::CheckYtDlp(program) => {
-                let tx = self.internal_tx.clone();
-                tokio::spawn(async move {
-                    let result = YtDlp::new(&program, "").version().await.map_err(|e| {
-                        if e.is::<crate::providers::youtube::NotInstalled>() {
-                            "not installed".to_string()
-                        } else {
-                            format!("{e:#}")
-                        }
-                    });
-                    let _ = tx.send(Internal::YtDlpChecked { program, result });
-                });
-            }
             Command::UpdateConfig(cfg) => self.update_config(*cfg).await,
             Command::AttachWindow(handle) => {
                 // Windows media controls belong to a window.
@@ -1872,22 +1826,6 @@ impl Service {
                     self.start_mpv_with(track, &url, start, &opts).await;
                 }
             }
-            Internal::VideoReady { seq, video } => {
-                if seq == self.load_seq {
-                    self.video = video;
-                    self.publish_player();
-                }
-            }
-            Internal::Resolved {
-                seq,
-                original,
-                resolved,
-            } => {
-                if seq == self.load_seq {
-                    let start = self.position;
-                    self.dispatch_resolved(original, resolved, start).await;
-                }
-            }
             Internal::LoadFailed { seq, error } => {
                 if seq == self.load_seq {
                     self.load_failed(error).await;
@@ -1959,10 +1897,6 @@ impl Service {
                     self.set_account(|f| &mut f.soundcloud, AccountStatus::Error(format!("{e:#}")));
                     self.shared.error(format!("SoundCloud sync failed: {e:#}"));
                 }
-            },
-            Internal::AppleImported(r) => match r {
-                Ok((songs, playlists)) => self.merge_apple(songs, playlists),
-                Err(e) => self.shared.error(format!("Apple Music import failed: {e:#}")),
             },
             Internal::UpdateChecked { manual, result } => {
                 let mut feed = self.shared.feed.write().unwrap();
@@ -2157,10 +2091,6 @@ impl Service {
                 self.shared.repaint();
             }
             Internal::DownloadDone { track, result } => self.download_finished(track, result),
-            Internal::YtDlpChecked { program, result } => {
-                self.shared.feed.write().unwrap().ytdlp = Some((program, result));
-                self.shared.repaint();
-            }
             Internal::LastfmSession(r) => match r {
                 Ok((key, user)) => {
                     self.cfg.lastfm.session_key = key;
@@ -2481,7 +2411,7 @@ fn friendly_spotify_error(e: &anyhow::Error) -> String {
 fn named_track(artist: &str, title: &str) -> Track {
     Track {
         id: format!("named:{artist}\u{1f}{title}"),
-        source: Source::AppleMusic,
+        source: Source::Local,
         title: title.to_string(),
         artist: artist.to_string(),
         album: String::new(),
@@ -2495,7 +2425,8 @@ fn named_track(artist: &str, title: &str) -> Track {
     }
 }
 
-/// Finds a playable version of an imported (Apple Music) song on Spotify or SoundCloud.
+/// Finds a playable version of a song known by name (Last.fm's top tracks) on Spotify or
+/// SoundCloud.
 struct Resolver {
     spotify: Option<(Arc<SpotifyAuth>, Arc<SpotifyApi>)>,
     soundcloud: Option<Arc<SoundCloud>>,
@@ -2840,9 +2771,110 @@ mod tests {
     }
 
     #[test]
+    fn links_for_what_mpv_plays() {
+        let link = link_for(
+            "http://pi:43411/api/peer/local/file?path=%2Fm%2Fa.mp4",
+            &[
+                (
+                    "http-header-fields",
+                    "X-Kumo-Peer-Id: abc,X-Kumo-Peer-Token: t:1".to_string(),
+                ),
+                ("user-agent", "UA".to_string()),
+                ("start", "3".to_string()),
+            ],
+        );
+        assert_eq!(link.user_agent.as_deref(), Some("UA"));
+        assert_eq!(
+            link.headers,
+            vec![
+                ("X-Kumo-Peer-Id".to_string(), "abc".to_string()),
+                ("X-Kumo-Peer-Token".to_string(), "t:1".to_string())
+            ]
+        );
+        // A cover in a music file isn't a picture to play; a video track is.
+        let cover = serde_json::json!([{"type": "audio"}, {"type": "video", "albumart": true, "codec": "mjpeg"}]);
+        assert_eq!(picture_of(&cover, link.clone()), None);
+        let video = serde_json::json!([
+            {"type": "video", "codec": "h264", "demux-w": 1920, "demux-h": 1080, "demux-fps": 23.976},
+            {"type": "audio"}
+        ]);
+        let p = picture_of(&video, link.clone()).unwrap();
+        assert_eq!((p.width, p.height, p.label.as_str()), (1920, 1080, "H.264 1080p"));
+        assert_eq!(p.link, link);
+    }
+
+    /// mpv opens a video file (as Utako runs it, without showing a picture) and its track list
+    /// gives the picture to draw.
+    #[tokio::test]
+    async fn video_files_have_a_picture() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("clip.webm");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x180:rate=24",
+                "-f",
+                "lavfi",
+            ])
+            .args([
+                "-i",
+                "sine=duration=1",
+                "-t",
+                "1",
+                "-c:v",
+                "libvpx-vp9",
+                "-c:a",
+                "libopus",
+            ])
+            .arg(&file)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            eprintln!("no ffmpeg with VP9: skipped");
+            return;
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let opts = MpvOptions {
+            binary: "mpv".into(),
+            volume: 0.0,
+            replaygain: false,
+            gapless: true,
+            audio_device: String::new(),
+            exclusive: false,
+        };
+        let Ok(mpv) = Mpv::spawn(&opts, 1, tx).await else {
+            eprintln!("no mpv: skipped");
+            return;
+        };
+        mpv.command(serde_json::json!(["set_property", "ao", "null"]))
+            .await
+            .unwrap();
+        mpv.load_with(&file.to_string_lossy(), 0.0, &[]).await.unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while let Ok(Some((_, ev))) = tokio::time::timeout_at(deadline, rx.recv()).await {
+            if ev == MpvEvent::FileLoaded {
+                break;
+            }
+        }
+        let tracks = mpv
+            .command(serde_json::json!(["get_property", "track-list"]))
+            .await
+            .unwrap();
+        mpv.quit().await;
+        let p = picture_of(&tracks, link_for(&file.to_string_lossy(), &[])).unwrap();
+        assert_eq!((p.width, p.height, p.label.as_str()), (320, 180, "VP9 180p"));
+        assert!((p.fps - 24.0).abs() < 0.1, "{}", p.fps);
+    }
+
+    #[test]
     fn best_match_prefers_exact_and_close_duration() {
         let target = track(
-            Source::AppleMusic,
+            Source::Local,
             "Daft Punk",
             "Get Lucky (feat. Pharrell Williams)",
             248_000,
@@ -2858,7 +2890,7 @@ mod tests {
 
     #[test]
     fn best_match_rejects_wrong_songs() {
-        let target = track(Source::AppleMusic, "Adele", "Hello", 295_000);
+        let target = track(Source::Local, "Adele", "Hello", 295_000);
         let candidates = vec![
             track(Source::Spotify, "Lionel Richie", "Hello", 250_000),
             track(Source::Spotify, "Adele", "Hello", 400_000),

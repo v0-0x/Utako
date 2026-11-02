@@ -1,6 +1,6 @@
 ; Inno Setup script for the Windows installer.
 ; Built by .github/workflows/release.yml:  ISCC /DAppVersion=0.2.0 /DStage=<folder> utako.iss
-; <Stage> holds multimusic.exe, tools\ (mpv, yt-dlp, deno, ffmpeg, ffprobe), fonts\ and the license.
+; <Stage> holds multimusic.exe, tools\ (mpv, ffmpeg, ffprobe), fonts\ and the license.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"

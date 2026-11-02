@@ -13,9 +13,8 @@ impl Service {
             .then(|| self.web_auth().map(|auth| (auth, self.spotify_api.clone())))
             .flatten();
         let sc = (!q.is_empty() && self.cfg.soundcloud.enabled).then(|| self.soundcloud.clone());
-        // Music videos, through yt-dlp (not on iOS, which can't run it).
-        let yt = (!q.is_empty() && !cfg!(target_os = "ios"))
-            .then(|| YtDlp::new(&self.cfg.downloads.ytdlp_path, &self.cfg.downloads.ytdlp_args));
+        // Music videos, from YouTube (not on iOS, which has no player for their pictures).
+        let yt = (!q.is_empty() && !cfg!(target_os = "ios")).then(|| self.http.clone());
         self.search_seq += 1;
         let seq = self.search_seq;
         self.shared.feed.write().unwrap().search = SearchState {
@@ -50,20 +49,13 @@ impl Service {
                 });
             });
         }
-        if let Some(ytdlp) = yt {
+        if let Some(http) = yt {
             let tx = self.internal_tx.clone();
             let q = q.clone();
             tokio::spawn(async move {
-                let tracks = youtube::search(&ytdlp, &q, 15)
+                let tracks = youtube::search(&http, &q, 15)
                     .await
-                    .map(|videos| videos.iter().map(youtube::video_track).collect())
-                    .map_err(|e| {
-                        if e.is::<youtube::NotInstalled>() {
-                            anyhow!("music videos need yt-dlp (on Arch: sudo pacman -S yt-dlp)")
-                        } else {
-                            e
-                        }
-                    });
+                    .map(|videos| videos.iter().map(youtube::video_track).collect());
                 let _ = tx.send(Internal::SearchResults {
                     seq,
                     query: q,
@@ -165,7 +157,7 @@ impl Service {
         self.shared.repaint();
         match links::target(&key) {
             Some(target) => self.load_page(key, target),
-            None => self.page_failed(&key, "That isn't a Spotify, SoundCloud or Apple Music link"),
+            None => self.page_failed(&key, "That isn't a Spotify or SoundCloud link"),
         }
     }
 
@@ -300,55 +292,6 @@ impl Service {
                     }
                     .await;
                     with_spotify_songs(result, spotify, |page| send(key.clone(), page)).await;
-                });
-            }
-            Target::AppleMusic { kind, storefront, id } => {
-                let http = self.http.clone();
-                let configured = self.cfg.apple_music.developer_token.trim().to_string();
-                let cache = self.apple_dev_token.clone();
-                tokio::spawn(async move {
-                    let result = async {
-                        let token = {
-                            let mut cached = cache.lock().await;
-                            match (configured.is_empty(), cached.clone()) {
-                                (false, _) => configured,
-                                (true, Some(t)) => t,
-                                (true, None) => {
-                                    let t = apple_music::scrape_developer_token(&http).await?;
-                                    *cached = Some(t.clone());
-                                    t
-                                }
-                            }
-                        };
-                        let api = AppleMusicApi::new(http, &token, "", &storefront);
-                        let page = match kind {
-                            LinkKind::Artist => api.catalog_artist(&id).await,
-                            LinkKind::Album => api.catalog_album(&id).await,
-                            LinkKind::Playlist => api.catalog_playlist(&id).await,
-                            LinkKind::Track => api.catalog_song(&id).await,
-                        };
-                        if page.as_ref().is_err_and(apple_music::is_auth_error) {
-                            // A scraped token may have expired: scrape a new one next time.
-                            *cache.lock().await = None;
-                        }
-                        let page = page?;
-                        Ok(PageState {
-                            kind: links::kind_label(kind).into(),
-                            source: Some(Source::AppleMusic),
-                            title: page.title,
-                            subtitle: page.subtitle,
-                            image: page.image,
-                            round: kind == LinkKind::Artist,
-                            tracks: page.tracks,
-                            external_url: links::web_url(&format!(
-                                "applemusic:{}:{storefront}:{id}",
-                                links::kind_name(kind)
-                            )),
-                            ..Default::default()
-                        })
-                    }
-                    .await;
-                    send(key, result);
                 });
             }
             Target::Short(url) => {
@@ -735,9 +678,5 @@ pub(super) async fn expand_short_link(http: &reqwest::Client, url: &str) -> Resu
 }
 
 pub(super) fn friendly_page_error(e: &anyhow::Error) -> String {
-    if apple_music::is_auth_error(e) {
-        "Apple Music refused the request. Try again, or paste a developer token in Settings → Apple Music.".into()
-    } else {
-        friendly_net_error(e)
-    }
+    friendly_net_error(e)
 }

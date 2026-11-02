@@ -29,8 +29,6 @@ pub struct ViewState<'a> {
     pub download_custom: bool,
     /// The media server downloads go to (instead of `download_dir`), while it's connected.
     pub download_server: Option<String>,
-    /// The yt-dlp program, when YouTube downloads are on.
-    pub ytdlp: Option<&'a str>,
     /// What's typed in the top bar.
     pub search_text: &'a str,
     pub search_cache: &'a mut (String, u64, Vec<String>),

@@ -29,11 +29,27 @@ const COVER_NAMES: &[&str] = &[
 ];
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 
-pub fn is_audio_file(path: &Path) -> bool {
+/// Music videos: they play like songs, with their picture in the player. (MP4 is in
+/// [`AUDIO_EXTENSIONS`] too: it can be either.)
+pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mkv", "webm", "mov"];
+
+fn extension(path: &Path) -> String {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| AUDIO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default()
+}
+
+/// A file the library plays: music, or a music video (not on iPhone, which has no player for
+/// their pictures).
+pub fn is_audio_file(path: &Path) -> bool {
+    let ext = extension(path);
+    AUDIO_EXTENSIONS.contains(&ext.as_str()) || (!cfg!(target_os = "ios") && VIDEO_EXTENSIONS.contains(&ext.as_str()))
+}
+
+/// Whether `path` may hold a picture (a video file).
+pub fn is_video_file(path: &Path) -> bool {
+    VIDEO_EXTENSIONS.contains(&extension(path).as_str())
 }
 
 pub struct ScanResult {
@@ -198,6 +214,15 @@ pub fn read_track_in(path: &Path, root: Option<&Path>, cover: Option<String>, ad
         }
         Err(e) => tracing::debug!("could not read tags of {}: {e}", path.display()),
     }
+    // Matroska, WebM and QuickTime videos: ffprobe knows their length and names.
+    if track.duration_ms == 0 && is_video_file(path) {
+        if let Some(probed) = probe(path) {
+            track.duration_ms = probed.duration_ms;
+            if track.title.is_empty() && track.artist.is_empty() {
+                (track.title, track.artist) = (probed.title, probed.artist);
+            }
+        }
+    }
     let missing = track.title.is_empty() || track.artist.is_empty() || track.album.is_empty();
     if missing || track.track_no.is_none() {
         let guess = guess_from_path(path, root);
@@ -208,13 +233,66 @@ pub fn read_track_in(path: &Path, root: Option<&Path>, cover: Option<String>, ad
         };
         fill(&mut track.title, guess.title);
         fill(&mut track.artist, guess.artist);
-        fill(&mut track.album, guess.album);
+        // A music video is no album's song: its folder ("Music videos") isn't its album.
+        if !is_video_file(path) {
+            fill(&mut track.album, guess.album);
+        }
         track.track_no = track.track_no.or(guess.track_no);
     }
     if track.artist.is_empty() {
         track.artist = UNKNOWN_ARTIST.into();
     }
     track
+}
+
+/// What ffprobe says about a video file.
+#[derive(Debug, Default, PartialEq)]
+struct Probed {
+    duration_ms: u64,
+    title: String,
+    artist: String,
+}
+
+fn probe(path: &Path) -> Option<Probed> {
+    if cfg!(target_os = "ios") {
+        return None;
+    }
+    let out = crate::tools::std_command(crate::tools::resolve("ffprobe", "ffprobe"))
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:format_tags",
+            "-of",
+            "json",
+        ])
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    parse_probe(&out.stdout)
+}
+
+fn parse_probe(json: &[u8]) -> Option<Probed> {
+    let v: serde_json::Value = serde_json::from_slice(json).ok()?;
+    let format = &v["format"];
+    let seconds: f64 = format["duration"].as_str()?.parse().ok()?;
+    // Tag names differ in case between containers ("TITLE" in Matroska).
+    let tag = |name: &str| {
+        format["tags"]
+            .as_object()
+            .and_then(|tags| tags.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)))
+            .and_then(|(_, v)| v.as_str())
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default()
+    };
+    Some(Probed {
+        duration_ms: (seconds * 1000.0) as u64,
+        title: tag("title"),
+        artist: tag("artist"),
+    })
 }
 
 /// Shown for files that name no artist anywhere.
@@ -266,7 +344,7 @@ pub struct Guess {
     pub track_no: Option<u32>,
 }
 
-/// yt-dlp's video id suffix: " [dQw4w9WgXcQ]" (YouTube) or " [1234567890]" (SoundCloud).
+/// A video id suffix downloaders add: " [dQw4w9WgXcQ]" (YouTube) or " [1234567890]" (SoundCloud).
 static VIDEO_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s*\[([A-Za-z0-9_-]{11}|\d{6,})\]\s*$").expect("valid regex"));
 /// "01 - ", "01. ", "1-01 ", "01) ", "01 ": a leading (disc and) track number.
@@ -467,6 +545,60 @@ mod tests {
         assert!(is_audio_file(Path::new("x.opus")));
         assert!(!is_audio_file(Path::new("cover.jpg")));
         assert!(!is_audio_file(Path::new("noext")));
+        // Music videos.
+        assert!(is_audio_file(Path::new("/v/Artist - Song.mkv")));
+        assert!(is_audio_file(Path::new("clip.WEBM")));
+        assert!(is_video_file(Path::new("clip.mp4")) && !is_video_file(Path::new("song.m4a")));
+    }
+
+    #[test]
+    fn reads_what_ffprobe_says() {
+        let json =
+            br#"{"format": {"duration": "213.040000", "tags": {"TITLE": "Song", "ARTIST": "Artist", "ENCODER": "x"}}}"#;
+        assert_eq!(
+            parse_probe(json),
+            Some(Probed {
+                duration_ms: 213_040,
+                title: "Song".into(),
+                artist: "Artist".into()
+            })
+        );
+        assert_eq!(parse_probe(br#"{"format": {}}"#), None);
+        assert_eq!(parse_probe(b"nope"), None);
+    }
+
+    /// A Matroska music video gets its length and names from ffprobe.
+    #[test]
+    fn reads_video_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mkv = tmp.path().join("clip.mkv");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=160x120:rate=10",
+                "-f",
+                "lavfi",
+            ])
+            .args(["-i", "sine=duration=2", "-t", "2", "-c:v", "mpeg4", "-c:a", "aac"])
+            .args(["-metadata", "title=Houdini", "-metadata", "artist=Dua Lipa"])
+            .arg(&mkv)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            eprintln!("no ffmpeg: skipped");
+            return;
+        }
+        let t = read_track(&mkv, None, 0);
+        assert_eq!(
+            (t.title.as_str(), t.artist.as_str(), t.album.as_str()),
+            ("Houdini", "Dua Lipa", "")
+        );
+        assert!((1900..=2100).contains(&t.duration_ms), "{}", t.duration_ms);
     }
 
     #[test]
