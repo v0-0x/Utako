@@ -119,7 +119,10 @@ jobs:
           cp "$log" shots/multimusic.log 2>/dev/null || echo "no log at $log"
           cat shots/multimusic.log 2>/dev/null || true
           # Still running after 25 s: it started and didn't crash.
-          if ! xcrun simctl spawn "$udid" launchctl list | grep -q "$BUNDLE_ID"; then
+          # The whole list first: grep -q stops reading at the first match, and launchctl's broken
+          # pipe then failed the check (pipefail) while Utako was running.
+          running=$(xcrun simctl spawn "$udid" launchctl list)
+          if ! grep -qF "$BUNDLE_ID" <<<"$running"; then
             echo "::error::Utako isn't running in the simulator"
             ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | tail -5 || true
             exit 1
