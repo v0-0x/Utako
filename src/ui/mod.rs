@@ -597,7 +597,10 @@ impl App {
             let v = player.volume + if up { 5.0 } else { -5.0 };
             self.send(Command::SetVolume(v));
         }
-        if (ctrl && f) || slash {
+        if ctrl && f && self.view == View::Settings {
+            // On the Settings page, Ctrl+F searches the settings.
+            self.settings.focus_search = true;
+        } else if (ctrl && f) || slash {
             self.focus_search = true;
         }
         if l {
