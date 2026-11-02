@@ -249,7 +249,7 @@ pub fn split_args(s: &str) -> Vec<String> {
 /// past, into what to do about it.
 fn explain(reason: &str) -> String {
     let lower = reason.to_lowercase();
-    if lower.contains("not a bot") {
+    if lower.contains("not a bot") || lower.contains("confirm your age") {
         format!(
             "YouTube wants a signed-in browser: add --cookies-from-browser firefox (or chrome) under \
              Settings → Downloads → Extra yt-dlp options ({reason})"
@@ -681,10 +681,9 @@ mod tests {
         );
         assert_eq!(last_error(""), "yt-dlp failed");
         assert!(explain("Sign in to confirm you're not a bot. Use --cookies-from-browser").contains("Settings"));
-        assert_eq!(
-            explain("Sign in to confirm your age. This video may be inappropriate"),
-            "Sign in to confirm your age. This video may be inappropriate"
-        );
+        // Age-restricted videos need a signed-in browser too.
+        assert!(explain("Sign in to confirm your age. This video may be inappropriate").contains("Settings"));
+        assert_eq!(explain("Video unavailable"), "Video unavailable");
     }
 
     /// Writes an executable stand-in for yt-dlp.
@@ -902,26 +901,65 @@ pub struct VideoLink {
     pub label: String,
 }
 
-/// A music video's streams: the sound (played by mpv) and the picture (drawn in the app).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Streams {
-    pub audio: Link,
-    pub video: Option<VideoLink>,
+/// The picture only (mpv plays the sound itself), up to 720p (the centre panel is never much
+/// bigger) and not AV1, which older computers can't decode smoothly. Never DASH: ffmpeg can't
+/// open those pieces as one link (former livestreams have nothing else, and play without one).
+const PICTURE_FORMAT: &str = "bv[height<=?720][vcodec!^=av01][protocol!*=dash]/\
+                              bv[height<=?720][protocol!*=dash]/b[height<=?720][protocol!*=dash]/\
+                              bv[protocol!*=dash]/b[protocol!*=dash]";
+
+/// The link mpv plays a music video's sound from: mpv's own YouTube support (its ytdl hook)
+/// runs yt-dlp for it, which handles every kind of stream YouTube gives out.
+pub fn mpv_link(id: &str) -> String {
+    format!("ytdl://{}", watch_url(id))
 }
 
-/// Up to 720p (the centre panel is never much bigger) and not AV1, which older computers
-/// can't decode smoothly; direct links before HLS ones, which seek more slowly.
-const VIDEO_FORMAT: &str = "bv[height<=?720][vcodec!^=av01][protocol^=http]+ba[protocol^=http]/\
-                            bv[height<=?720][vcodec!^=av01]+ba/b[height<=?720]/b";
+/// mpv's `ytdl-raw-options` for that: the JavaScript runtime found and the extra options from
+/// Settings (`--cookies-from-browser firefox` → `cookies-from-browser=firefox`).
+pub fn mpv_raw_options(js: &JsRuntime, extra: &[String]) -> String {
+    let mut args: Vec<String> = match js {
+        JsRuntime::Found(args) => args.clone(),
+        _ => Vec::new(),
+    };
+    args.extend(extra.iter().cloned());
+    let mut pairs = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let Some(name) = args[i].strip_prefix("--").filter(|n| !n.is_empty()) else {
+            i += 1;
+            continue;
+        };
+        let value = args.get(i + 1).filter(|v| !v.starts_with("--"));
+        i += if value.is_some() { 2 } else { 1 };
+        let value = value.map(String::as_str).unwrap_or("");
+        // A comma would split mpv's list.
+        if !value.contains(',') {
+            pairs.push(format!("{name}={value}"));
+        }
+    }
+    pairs.join(",")
+}
 
-/// Looks up video `id`'s streams.
-pub async fn stream(ytdlp: &YtDlp, id: &str) -> Result<Streams> {
+/// yt-dlp's error as mpv logged it ("ERROR: [youtube] id: Sign in to confirm your age"), in
+/// plain words.
+pub fn explain_problem(text: &str) -> String {
+    let why = explain(&last_error(text));
+    if js_runtime_missing() {
+        format!("{why} ({})", js_runtime_hint())
+    } else {
+        why
+    }
+}
+
+/// Looks up video `id`'s picture for the player in the centre panel (`None`: no stream the
+/// app can draw).
+pub async fn picture(ytdlp: &YtDlp, id: &str) -> Result<Option<VideoLink>> {
     if !is_video_id(id) {
         bail!("not a YouTube video");
     }
     js_runtime(ytdlp).await;
     let mut cmd = ytdlp.command();
-    cmd.args(["--no-playlist", "--dump-single-json", "--format", VIDEO_FORMAT])
+    cmd.args(["--no-playlist", "--dump-single-json", "--format", PICTURE_FORMAT])
         .arg(watch_url(id))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -930,48 +968,44 @@ pub async fn stream(ytdlp: &YtDlp, id: &str) -> Result<Streams> {
         .map_err(|_| anyhow!("YouTube didn't answer in time"))?
         .map_err(spawn_error)?;
     if !out.status.success() {
-        let mut why = explain(&last_error(&String::from_utf8_lossy(&out.stderr)));
-        if js_runtime_missing() {
-            why = format!("{why} ({})", js_runtime_hint());
-        }
-        bail!("{why}");
+        bail!("{}", explain_problem(&String::from_utf8_lossy(&out.stderr)));
     }
-    parse_stream(&out.stdout)
+    parse_picture(&out.stdout)
 }
 
-pub fn parse_stream(json: &[u8]) -> Result<Streams> {
+pub fn parse_picture(json: &[u8]) -> Result<Option<VideoLink>> {
     let v: Value = serde_json::from_slice(json).context("unexpected output from yt-dlp")?;
-    let picked = v
+    // One format picked, or (from an older selection) the picture first of two.
+    let format = v
         .get("requested_formats")
         .and_then(Value::as_array)
-        .filter(|f| f.len() == 2);
-    let (video_format, audio_format) = match picked {
-        Some(formats) => (&formats[0], &formats[1]),
-        // One stream with both (YouTube's 360p "18", or a site without separate streams).
-        None => (&v, &v),
-    };
-    let audio = link_of(audio_format).ok_or_else(|| anyhow!("YouTube gave no stream"))?;
-    let has_video = video_format
+        .and_then(|f| f.first())
+        .unwrap_or(&v);
+    let has_video = format
         .get("vcodec")
         .and_then(Value::as_str)
         .is_some_and(|c| c != "none");
-    let video = has_video.then(|| link_of(video_format)).flatten().map(|link| {
-        let num = |k: &str| video_format.get(k).and_then(Value::as_f64).unwrap_or(0.0);
-        let (width, height) = (num("width") as u32, num("height") as u32);
-        let codec = video_format.get("vcodec").and_then(Value::as_str).unwrap_or("");
-        let codec = codec_name(codec);
-        VideoLink {
-            link,
-            width,
-            height,
-            fps: num("fps"),
-            label: match height {
-                0 => codec.to_string(),
-                h => format!("{codec} {h}p"),
-            },
-        }
-    });
-    Ok(Streams { audio, video })
+    let dash = format
+        .get("protocol")
+        .and_then(Value::as_str)
+        .is_some_and(|p| p.contains("dash"));
+    if !has_video || dash {
+        return Ok(None);
+    }
+    let Some(link) = link_of(format) else { return Ok(None) };
+    let num = |k: &str| format.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let (width, height) = (num("width") as u32, num("height") as u32);
+    let codec = codec_name(format.get("vcodec").and_then(Value::as_str).unwrap_or(""));
+    Ok(Some(VideoLink {
+        link,
+        width,
+        height,
+        fps: num("fps"),
+        label: match height {
+            0 => codec.to_string(),
+            h => format!("{codec} {h}p"),
+        },
+    }))
 }
 
 fn link_of(format: &Value) -> Option<Link> {
@@ -1050,38 +1084,57 @@ mod video_tests {
     }
 
     #[test]
-    fn streams() {
-        // One stream with both: the sound and the picture come from it.
+    fn pictures() {
+        // One stream with both: its picture.
         let both = br#"{"url": "https://a.example/x?b=1,2", "vcodec": "avc1.42001E", "height": 360, "width": 640,
-            "http_headers": {"User-Agent": "UA", "Referer": "https://www.youtube.com/", "Accept": "a,b"}}"#;
-        let s = parse_stream(both).unwrap();
-        assert_eq!(s.audio.url, "https://a.example/x?b=1,2");
-        assert_eq!(s.audio.user_agent.as_deref(), Some("UA"));
+            "protocol": "https", "http_headers": {"User-Agent": "UA", "Referer": "https://www.youtube.com/", "Accept": "a,b"}}"#;
+        let v = parse_picture(both).unwrap().unwrap();
+        assert_eq!(v.link.url, "https://a.example/x?b=1,2");
+        assert_eq!(v.link.user_agent.as_deref(), Some("UA"));
         // Only the headers mpv's own youtube-dl support sends (no comma lists like Accept).
         assert_eq!(
-            s.audio.headers,
+            v.link.headers,
             vec![("Referer".to_string(), "https://www.youtube.com/".to_string())]
         );
-        let v = s.video.unwrap();
         assert_eq!((v.width, v.height, v.label.as_str()), (640, 360, "H.264 360p"));
-
-        // Separate picture and sound.
-        let apart = br#"{"requested_formats": [
-            {"url": "https://v.example/v", "vcodec": "vp09.00.40.08", "acodec": "none", "width": 1280, "height": 720, "fps": 30},
-            {"url": "https://a.example/a;b", "vcodec": "none", "acodec": "opus"}]}"#;
-        let s = parse_stream(apart).unwrap();
-        assert_eq!(s.audio.url, "https://a.example/a;b");
-        let v = s.video.unwrap();
-        assert_eq!(v.link.url, "https://v.example/v");
+        let picture = br#"{"url": "https://v.example/v", "vcodec": "vp09.00.40.08", "acodec": "none",
+            "width": 1280, "height": 720, "fps": 30, "protocol": "m3u8_native"}"#;
+        let v = parse_picture(picture).unwrap().unwrap();
         assert_eq!(
             (v.width, v.height, v.fps, v.label.as_str()),
             (1280, 720, 30.0, "VP9 720p")
         );
+        // Sound only, or DASH pieces: nothing to draw.
+        assert!(parse_picture(br#"{"url": "https://a.example/a", "vcodec": "none"}"#)
+            .unwrap()
+            .is_none());
+        let dash = br#"{"url": "https://v.example/manifest", "vcodec": "avc1", "protocol": "http_dash_segments"}"#;
+        assert!(parse_picture(dash).unwrap().is_none());
+        assert!(parse_picture(b"not json").is_err());
+    }
 
-        // Sound only (no picture to draw).
-        let audio = br#"{"url": "https://a.example/a", "vcodec": "none"}"#;
-        assert!(parse_stream(audio).unwrap().video.is_none());
-        assert!(parse_stream(b"{}").is_err());
+    #[test]
+    fn mpv_options() {
+        assert_eq!(
+            mpv_link("dQw4w9WgXcQ"),
+            "ytdl://https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        );
+        let js = JsRuntime::Found(vec!["--js-runtimes".into(), "deno:/usr/bin/deno".into()]);
+        let extra = split_args("--cookies-from-browser firefox --no-check-certificates --x a,b");
+        assert_eq!(
+            mpv_raw_options(&js, &extra),
+            "js-runtimes=deno:/usr/bin/deno,cookies-from-browser=firefox,no-check-certificates="
+        );
+        assert_eq!(mpv_raw_options(&JsRuntime::Missing, &[]), "");
+        assert_eq!(
+            explain_problem("ERROR: [youtube] dQw4w9WgXcQ: Private video"),
+            "Private video"
+        );
+        // Age-restricted: what to do about it.
+        assert!(
+            explain_problem("ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm your age")
+                .contains("--cookies-from-browser")
+        );
     }
 
     #[test]

@@ -34,6 +34,9 @@ pub enum MpvEvent {
     },
     Pause(bool),
     Duration(f64),
+    /// Why a YouTube link didn't open (never on iOS, which plays no YouTube).
+    #[allow(dead_code)]
+    Problem(String),
     /// The player stopped working.
     Died,
 }
@@ -46,6 +49,9 @@ pub struct MpvOptions {
     pub gapless: bool,
     pub audio_device: String,
     pub exclusive: bool,
+    /// Unused here: iOS has no yt-dlp.
+    #[allow(dead_code)]
+    pub ytdl: String,
 }
 
 /// Events from one player, tagged with its [`Mpv::id`] (crossfades run two at once).

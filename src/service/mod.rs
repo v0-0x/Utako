@@ -547,6 +547,11 @@ enum Internal {
         /// A music video's picture, drawn by the app while mpv plays the sound.
         video: Option<Arc<crate::providers::youtube::VideoLink>>,
     },
+    /// A music video's picture, found after its sound started.
+    VideoReady {
+        seq: u64,
+        video: Option<Arc<crate::providers::youtube::VideoLink>>,
+    },
     Resolved {
         seq: u64,
         original: Track,
@@ -768,6 +773,8 @@ pub struct Service {
     quality: Option<AudioQuality>,
     /// The picture of the music video playing (drawn by the UI).
     video: Option<Arc<crate::providers::youtube::VideoLink>>,
+    /// yt-dlp's error for the music video loading, as mpv logged it.
+    ytdl_problem: Option<String>,
     load_seq: u64,
     started_reported: bool,
     resume_position: Option<f64>,
@@ -957,6 +964,7 @@ impl Service {
             playing: None,
             quality: None,
             video: None,
+            ytdl_problem: None,
             load_seq: 0,
             started_reported: false,
             resume_position: None,
@@ -1862,6 +1870,12 @@ impl Service {
                     let start = self.position;
                     self.video = video;
                     self.start_mpv_with(track, &url, start, &opts).await;
+                }
+            }
+            Internal::VideoReady { seq, video } => {
+                if seq == self.load_seq {
+                    self.video = video;
+                    self.publish_player();
                 }
             }
             Internal::Resolved {

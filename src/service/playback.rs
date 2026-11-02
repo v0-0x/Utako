@@ -48,9 +48,10 @@ impl Service {
         // `start` is where this song starts; a position saved for another one doesn't apply.
         self.resume_position = None;
         self.playing = None;
-        // What the last song was (its format, its picture) isn't this one's.
+        // What the last song was (its format, its picture, why it failed) isn't this one's.
         self.quality = None;
         self.video = None;
+        self.ytdl_problem = None;
         self.duration = track.duration_secs();
         self.set_position(start);
         self.status = PlayStatus::Loading;
@@ -224,6 +225,7 @@ impl Service {
             gapless: self.cfg.playback.gapless,
             audio_device: self.cfg.playback.audio_device.clone(),
             exclusive: self.cfg.playback.bit_perfect,
+            ytdl: crate::tools::resolve(&self.cfg.downloads.ytdlp_path, "yt-dlp"),
         };
         let id = self.mpv_next_id;
         self.mpv_next_id += 1;
@@ -247,21 +249,34 @@ impl Service {
         let ytdlp = YtDlp::new(&self.cfg.downloads.ytdlp_path, &self.cfg.downloads.ytdlp_args);
         let tx = self.internal_tx.clone();
         tokio::spawn(async move {
-            let msg = match youtube::stream(&ytdlp, &id).await {
-                // mpv plays the sound; the app draws the picture in its centre panel.
-                Ok(streams) => Internal::StreamReady {
-                    seq,
-                    track,
-                    opts: link_options(&streams.audio),
-                    url: streams.audio.url,
-                    video: streams.video.map(Arc::new),
-                },
-                Err(e) => Internal::LoadFailed {
-                    seq,
-                    error: format!("YouTube: {e:#}"),
-                },
+            // The sound: mpv opens the video with its own YouTube support, which runs yt-dlp and
+            // knows every kind of stream YouTube gives out (a former livestream's DASH pieces).
+            let js = youtube::js_runtime(&ytdlp).await;
+            let mut opts = vec![("ytdl-format", "bestaudio/best".to_string())];
+            let raw = youtube::mpv_raw_options(&js, &ytdlp.args);
+            if !raw.is_empty() {
+                opts.push(("ytdl-raw-options", raw));
+            }
+            let _ = tx.send(Internal::StreamReady {
+                seq,
+                track,
+                url: youtube::mpv_link(&id),
+                opts,
+                video: None,
+            });
+            // The picture, for the player in the centre panel, meanwhile: without it the song
+            // still plays.
+            let video = match youtube::picture(&ytdlp, &id).await {
+                Ok(video) => video,
+                Err(e) => {
+                    tracing::warn!("no picture for YouTube video {id}: {e:#}");
+                    None
+                }
             };
-            let _ = tx.send(msg);
+            let _ = tx.send(Internal::VideoReady {
+                seq,
+                video: video.map(Arc::new),
+            });
         });
     }
 
@@ -702,17 +717,24 @@ impl Service {
                 }
                 "error" => {
                     let name = self.playing.as_ref().map(|t| t.title.clone()).unwrap_or_default();
-                    let mut why = error.unwrap_or_else(|| "unknown error".into());
-                    // YouTube's links play only once yt-dlp could unlock them.
                     let youtube = self.playing.as_ref().is_some_and(|t| t.source == Source::YouTube);
-                    if youtube && youtube::js_runtime_missing() {
-                        why = format!("{why}. {}", youtube::js_runtime_hint());
-                    }
+                    // A music video: yt-dlp's own reason ("Sign in to confirm your age") rather
+                    // than mpv's "loading failed".
+                    let why = match self.ytdl_problem.take().filter(|_| youtube) {
+                        Some(problem) => youtube::explain_problem(&problem),
+                        None if youtube && youtube::js_runtime_missing() => format!(
+                            "{}. {}",
+                            error.unwrap_or_else(|| "unknown error".into()),
+                            youtube::js_runtime_hint()
+                        ),
+                        None => error.unwrap_or_else(|| "unknown error".into()),
+                    };
                     self.load_failed(format!("Can't play “{name}”: {why}")).await;
                 }
                 _ => {}
             },
             MpvEvent::StartFile { playlist_entry_id } => self.mpv_entry = Some(playlist_entry_id),
+            MpvEvent::Problem(text) => self.ytdl_problem = Some(text),
             MpvEvent::Died => {}
         }
     }
@@ -1404,23 +1426,4 @@ pub(super) fn same_album(a: &Track, b: &Track) -> bool {
     !album.is_empty()
         && album.eq_ignore_ascii_case(b.album.trim())
         && normalize_artist(&a.artist) == normalize_artist(&b.artist)
-}
-
-/// mpv's options for a link: the User-Agent and headers it was made for (a header whose
-/// value has a comma is left out: mpv's list option would split it).
-fn link_options(link: &youtube::Link) -> Vec<(&'static str, String)> {
-    let mut opts = Vec::new();
-    if let Some(agent) = &link.user_agent {
-        opts.push(("user-agent", agent.clone()));
-    }
-    let fields: Vec<String> = link
-        .headers
-        .iter()
-        .filter(|(_, value)| !value.contains(','))
-        .map(|(name, value)| format!("{name}: {value}"))
-        .collect();
-    if !fields.is_empty() {
-        opts.push(("http-header-fields", fields.join(",")));
-    }
-    opts
 }
