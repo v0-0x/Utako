@@ -332,10 +332,14 @@ pub const DEFAULT_ACCENT: [u8; 3] = [0xe9, 0xe6, 0xdf];
 const OLD_DEFAULT_ACCENT: [u8; 3] = [0x8b, 0x7c, 0xf6];
 
 /// Where new versions come from.
-pub const UPDATES_REPO: &str = "v0-0x/sumo-music";
+pub const UPDATES_REPO: &str = "v0-0x/Utako";
 /// The repository's earlier addresses (before its owner and then it were renamed). GitHub only
 /// redirects from them until someone else takes the name, so saved settings move to the new one.
-const OLD_UPDATES_REPOS: [&str; 2] = ["simo1337s/localmusicplayer", "v0-0x/localmusicplayer"];
+const OLD_UPDATES_REPOS: [&str; 3] = [
+    "simo1337s/localmusicplayer",
+    "v0-0x/localmusicplayer",
+    "v0-0x/sumo-music",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]

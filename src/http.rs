@@ -3,11 +3,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-pub const USER_AGENT: &str = concat!(
-    "Utako/",
-    env!("CARGO_PKG_VERSION"),
-    " (https://github.com/v0-0x/sumo-music)"
-);
+pub const USER_AGENT: &str = concat!("Utako/", env!("CARGO_PKG_VERSION"), " (https://github.com/v0-0x/Utako)");
 
 /// Most an image may be (covers, avatars): a bigger answer is no image Utako wants.
 pub const MAX_IMAGE: usize = 16 << 20;

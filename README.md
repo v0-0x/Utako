@@ -44,7 +44,7 @@ It's written in Rust with [egui](https://github.com/emilk/egui), like [Spotifast
 
 ## Install on Windows or macOS
 
-**[Download the newest version](https://github.com/v0-0x/sumo-music/releases/latest)** (under *Assets* on that page):
+**[Download the newest version](https://github.com/v0-0x/Utako/releases/latest)** (under *Assets* on that page):
 
 - **Windows 10/11 (64-bit):** `Utako-Setup-<version>-x64.exe`. It installs for your user (no administrator prompt), with everything Utako needs: mpv for playback, yt-dlp and ffmpeg for downloads, and the Inter font. Start menu entry and an optional desktop shortcut included; uninstall from *Settings → Apps*. Your settings stay in `%APPDATA%\multimusic`.
 - **macOS 11 or newer:** `Utako-<version>-macos-arm64.dmg` for Apple Silicon (M1/M2/M3/M4) or `Utako-<version>-macos-intel.dmg` for Intel Macs. Open it and drag Utako to Applications; mpv, yt-dlp and ffmpeg are inside the app. Utako isn't notarized by Apple (that needs a paid developer account), so the first time macOS asks: right-click Utako → **Open** → **Open**, or *System Settings → Privacy & Security → Open Anyway*.
@@ -76,7 +76,7 @@ The app is built by [`.github/workflows/ios.yml`](.github/workflows/ios.yml), wh
 
 ```sh
 sudo pacman -S --needed base-devel git rust mpv
-git clone https://github.com/v0-0x/sumo-music.git
+git clone https://github.com/v0-0x/Utako.git sumo-music
 cd sumo-music
 makepkg -si          # builds and installs the `multimusic` package
 ```
@@ -221,7 +221,7 @@ Logs: on Linux run `MULTIMUSIC_LOG=multimusic=debug multimusic` in a terminal. T
 - **macOS says Utako "can't be opened" or "is damaged"**: it isn't notarized by Apple. Right-click it → Open → Open once, or run `xattr -dr com.apple.quarantine /Applications/Utako.app` in Terminal.
 - **Windows: the window stays black or Utako closes right away**: Utako draws with OpenGL; update your graphics driver. Remote Desktop sessions and virtual machines without a graphics driver only offer OpenGL 1.1, which is too old. `%APPDATA%\multimusic\data\multimusic.log` says what went wrong.
 - **Beta updates**: *Settings → Updates → Beta updates* gets new versions first, as betas (GitHub pre-releases), before they go out to everyone. Turning it off keeps the beta you have until a newer stable version comes out.
-- **An update doesn't install**: *Settings → Updates* shows why. You can always download the newest version from the [Releases page](https://github.com/v0-0x/sumo-music/releases/latest) and install it over the old one; settings are kept.
+- **An update doesn't install**: *Settings → Updates* shows why. You can always download the newest version from the [Releases page](https://github.com/v0-0x/Utako/releases/latest) and install it over the old one; settings are kept.
 - **Interface too small or too large**: Settings → Appearance → *Interface scale*.
 
 ## How it works

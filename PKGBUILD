@@ -8,7 +8,7 @@ pkgver=0.9.2
 pkgrel=1
 pkgdesc="Utako: lightweight native music player for local files, Spotify and SoundCloud with synced lyrics, Discord Rich Presence and Last.fm scrobbling"
 arch=('x86_64' 'aarch64')
-url="https://github.com/v0-0x/sumo-music"
+url="https://github.com/v0-0x/Utako"
 license=('MIT')
 depends=('mpv' 'libpulse' 'alsa-lib' 'openssl' 'libxkbcommon' 'libglvnd' 'wayland' 'libx11' 'libxcursor' 'libxrandr' 'libxi'
          'hicolor-icon-theme' 'gcc-libs' 'glibc')
