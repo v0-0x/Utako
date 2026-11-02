@@ -295,9 +295,15 @@ fn ios_graphics() -> eframe::egui_wgpu::WgpuConfiguration {
     }
 }
 
-/// Window/taskbar icon, from the same artwork as the launcher icon and the in-app logo.
+/// Window/taskbar icon, from the same artwork as the launcher icon and the in-app logo. On
+/// macOS eframe also puts it in the Dock while Utako runs, so there it has the margin macOS
+/// icons have (the shape 824 of 1024 pixels); without it Utako was bigger than every other app.
 fn app_icon() -> egui::IconData {
-    let img = image::load_from_memory(include_bytes!("../assets/icon-256.png"))
+    #[cfg(target_os = "macos")]
+    let png: &[u8] = include_bytes!("../assets/icon-macos-512.png");
+    #[cfg(not(target_os = "macos"))]
+    let png: &[u8] = include_bytes!("../assets/icon-256.png");
+    let img = image::load_from_memory(png)
         .expect("bundled icon is a valid PNG")
         .to_rgba8();
     egui::IconData {

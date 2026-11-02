@@ -1,9 +1,9 @@
 //! The helper programs Utako runs: mpv (local files and SoundCloud), yt-dlp and ffmpeg
 //! (downloads), and zotify (Spotify downloads). The Windows installer and the macOS app ship
-//! mpv, yt-dlp and ffmpeg next to Utako; otherwise they come from the PATH, and on macOS also
-//! from Homebrew's folders, which apps started from the Finder don't have on their PATH.
-//! Programs installed with pipx (zotify) are also looked for in `~/.local/bin`, which apps
-//! started from a desktop menu often don't have on their PATH either.
+//! them next to Utako (zotify in a folder of its own); otherwise they come from the PATH, and
+//! on macOS also from Homebrew's folders, which apps started from the Finder don't have on
+//! their PATH. Programs installed with pipx (zotify) are also looked for in `~/.local/bin`,
+//! which apps started from a desktop menu often don't have on their PATH either.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -68,8 +68,10 @@ fn candidates(name: &str) -> Vec<PathBuf> {
     let file = file_name(name);
     let mut out = Vec::new();
     if let Some(dir) = exe_dir() {
-        // Windows: C:\…\Utako\tools\mpv.exe
+        // Windows: C:\…\Utako\tools\mpv.exe, or in a folder of its own with the files it
+        // needs (zotify: tools\zotify\zotify.exe).
         out.push(dir.join("tools").join(&file));
+        out.push(dir.join("tools").join(name).join(&file));
         if cfg!(target_os = "macos") {
             // Utako.app/Contents/MacOS/multimusic → Contents/Resources
             let resources = dir.join("..").join("Resources");
@@ -77,6 +79,7 @@ fn candidates(name: &str) -> Vec<PathBuf> {
                 out.push(resources.join("mpv.app/Contents/MacOS/mpv"));
             }
             out.push(resources.join("tools").join(&file));
+            out.push(resources.join("tools").join(name).join(&file));
         }
     }
     if cfg!(target_os = "macos") {

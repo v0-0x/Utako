@@ -1,5 +1,5 @@
 # Builds the Windows installer and the macOS apps (Apple Silicon and Intel) with everything
-# they need (mpv, yt-dlp, ffmpeg, the Inter font) and the Arch Linux package, and publishes them
+# they need (mpv, yt-dlp, zotify, ffmpeg, the Inter font) and the Arch Linux package, and publishes them
 # as the GitHub release of the version in Cargo.toml. The apps' updater installs new releases
 # from there.
 #
@@ -105,8 +105,70 @@ jobs:
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-  windows:
+  # zotify, which saves Spotify songs straight from Spotify, frozen with PyInstaller so it runs
+  # without Python: one build for Windows and one for each kind of Mac, each made and tried on
+  # that kind of machine (PyInstaller can't build for another).
+  zotify:
     needs: version
+    if: needs.version.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            exe: zotify.exe
+          - name: macos-arm64
+            os: macos-14
+            exe: zotify
+          - name: macos-intel
+            os: macos-15-intel
+            exe: zotify
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      # zotify at a fixed commit; what it's made of is pinned in packaging/zotify/requirements.txt.
+      ZOTIFY: git+https://github.com/zotify-dev/zotify@08d844fe3e644ae6cd9bea34a3b4982e61129f33
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r packaging/zotify/requirements.txt
+          python -m pip install --no-deps "zotify @ $ZOTIFY"
+          # A folder (not one file that unpacks itself on every start): zotify starts quicker.
+          python -m PyInstaller --noconfirm --clean --onedir --name zotify \
+            --collect-all zotify --collect-all librespot --collect-all music_tag \
+            --distpath zotify-dist --workpath zotify-build packaging/zotify/zotify-main.py
+
+      - name: Try it
+        shell: bash
+        run: |
+          mkdir zotify-try && cd zotify-try
+          bash ../packaging/zotify/try.sh ../zotify-dist/zotify/${{ matrix.exe }}
+
+      # tar keeps the file modes and links that an artifact would lose.
+      - name: Pack
+        shell: bash
+        run: tar -czf zotify-${{ matrix.name }}.tar.gz -C zotify-dist zotify
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zotify-${{ matrix.name }}
+          path: zotify-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+
+  windows:
+    needs: [version, zotify]
     if: needs.version.outputs.publish == 'true'
     runs-on: windows-latest
     steps:
@@ -190,6 +252,20 @@ jobs:
           Invoke-WebRequest https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe -OutFile dl\rcedit.exe
           Assert-Hash dl\rcedit.exe 3e7801db1a5edbec91b49a24a094aad776cb4515488ea5a4ca2289c400eade2a
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: zotify-windows
+          path: dl-zotify
+
+      - name: Add zotify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # In a folder of its own: tools\zotify\zotify.exe and the files it needs.
+          tar -xzf dl-zotify\zotify-windows.tar.gz -C stage\tools
+          if ($LASTEXITCODE -ne 0) { throw "couldn't unpack zotify" }
+          if (-not (Test-Path stage\tools\zotify\zotify.exe)) { throw "zotify.exe is missing" }
+
       - name: Check the tools run
         shell: pwsh
         run: |
@@ -218,6 +294,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "yt-dlp doesn't run" }
           stage\tools\deno.exe --version | Select-Object -First 1
           if ($LASTEXITCODE -ne 0) { throw "deno doesn't run" }
+          $help = (& stage\tools\zotify\zotify.exe --help 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or $help -notmatch 'usage: zotify') { $help; throw "zotify doesn't run" }
+          ($help -split "`n")[0]
 
       - name: Stage the app
         shell: pwsh
@@ -284,18 +363,14 @@ jobs:
           # Clean up the test (the Mesa files must not stay).
           Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -Wait
 
-      # Copies under the old name: Sumo 0.8.0 and older look for Sumo-Setup-<version>-x64.exe.
-      - name: Copy for older versions' updater
-        run: Copy-Item "dist\Utako-Setup-$env:VERSION-x64.exe" "dist\Sumo-Setup-$env:VERSION-x64.exe"
-
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows
-          path: dist/*-Setup-*.exe
+          path: dist/Utako-Setup-*.exe
           if-no-files-found: error
 
   macos:
-    needs: version
+    needs: [version, zotify]
     if: needs.version.outputs.publish == 'true'
     strategy:
       fail-fast: false
@@ -378,6 +453,19 @@ jobs:
           check dl/inter.zip 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e
           unzip -q -j dl/inter.zip extras/ttf/Inter-Regular.ttf extras/ttf/Inter-SemiBold.ttf -d fonts
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: zotify-macos-${{ matrix.arch }}
+          path: dl-zotify
+
+      - name: Add zotify
+        run: |
+          set -euo pipefail
+          # In a folder of its own: tools/zotify/zotify and the files it needs, which PyInstaller
+          # has already signed (ad hoc, like the other tools).
+          tar -xzf dl-zotify/zotify-macos-${{ matrix.arch }}.tar.gz -C tools
+          file tools/zotify/zotify
+
       - name: Build the app
         run: |
           set -euo pipefail
@@ -385,10 +473,12 @@ jobs:
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp target/${{ matrix.target }}/release/multimusic "$app/Contents/MacOS/"
           sed "s/@VERSION@/$VERSION/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          # The macOS icon leaves the margin every macOS icon has (assets/icon-1024.png fills its
+          # square, as Windows, Linux and iOS want); without it the icon is bigger than the others.
           mkdir icon.iconset
           for s in 16 32 128 256 512; do
-            sips -z $s $s assets/icon-1024.png --out icon.iconset/icon_${s}x${s}.png > /dev/null
-            sips -z $((s*2)) $((s*2)) assets/icon-1024.png --out icon.iconset/icon_${s}x${s}@2x.png > /dev/null
+            sips -z $s $s assets/icon-macos-1024.png --out icon.iconset/icon_${s}x${s}.png > /dev/null
+            sips -z $((s*2)) $((s*2)) assets/icon-macos-1024.png --out icon.iconset/icon_${s}x${s}@2x.png > /dev/null
           done
           iconutil -c icns icon.iconset -o "$app/Contents/Resources/utako.icns"
           cp -R tools fonts mpv.app "$app/Contents/Resources/"
@@ -406,6 +496,7 @@ jobs:
           "$app/Contents/Resources/tools/ffmpeg" -hide_banner -version | head -1
           "$app/Contents/Resources/tools/yt-dlp" --version
           "$app/Contents/Resources/tools/deno" --version | head -1
+          "$app/Contents/Resources/tools/zotify/zotify" --help | head -1
           "$app/Contents/MacOS/multimusic" > run.log 2>&1 &
           pid=$!
           sleep 12
@@ -419,9 +510,6 @@ jobs:
           set -euo pipefail
           name="Utako-$VERSION-macos-${{ matrix.arch }}"
           ditto -c -k --sequesterRsrc --keepParent dist/Utako.app "dist/$name.zip"
-          # A copy under the old name: Sumo 0.8.0 and older look for Sumo-<version>-macos-<arch>.zip.
-          # Their updater puts Utako.app where Sumo.app was and opens it from there.
-          cp "dist/$name.zip" "dist/Sumo-$VERSION-macos-${{ matrix.arch }}.zip"
           mkdir dmg && cp -R dist/Utako.app dmg/ && ln -s /Applications dmg/Applications
           # hdiutil now and then fails with "Resource busy" on the hosted runners while another
           # disk image service still holds the volume; it works when tried again a bit later.
@@ -529,17 +617,19 @@ jobs:
             | sed -e 's/</\&lt;/g' \
             | awk 'NF && !/^[-[:space:]]/ { print "### " $0; next } { print }' > changes.md
           cd dist
+          # zotify's builds went into the installers; they aren't release files of their own.
+          rm -f zotify-*.tar.gz
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
           cat > ../install.md <<EOF
           ## Install
 
-          - **Windows 10/11:** run \`Utako-Setup-$VERSION-x64.exe\`. It installs for your user (no administrator prompt) with everything Utako needs (mpv, yt-dlp, ffmpeg).
+          - **Windows 10/11:** run \`Utako-Setup-$VERSION-x64.exe\`. It installs for your user (no administrator prompt) with everything Utako needs (mpv, yt-dlp, zotify, ffmpeg).
           - **macOS 11+:** open the \`.dmg\` for your Mac (**arm64** for Apple Silicon M1/M2/M3/M4, **intel** for Intel Macs) and drag Utako to Applications. The app isn't notarized by Apple, so the first time: right-click Utako → Open → Open (or System Settings → Privacy & Security → Open Anyway).
           - **Arch Linux (x86_64):** \`sudo pacman -U multimusic-*-x86_64.pkg.tar.zst\`, or build from the repository with \`makepkg -si\`.
           - **iPhone and iPad (iOS 15+):** install \`Utako-$VERSION-ios.ipa\` with Sideloadly or AltStore (signed with your Apple ID; a free one needs signing again every 7 days) or TrollStore. Put music in the Files app under On My iPhone › Utako.
 
-          Utako (called Sumo until 0.9.0) checks for updates by itself and installs them with one click. The \`Sumo-…\` files are the same app, for older versions' updater.
+          Utako checks for updates by itself and installs them with one click. The \`.zip\` files are the Mac apps as the updater installs them.
           EOF
           if [ -s ../changes.md ]; then
             { echo "## What's new"; echo; cat ../changes.md; echo; cat ../install.md; } > ../notes.md

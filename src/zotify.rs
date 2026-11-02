@@ -101,7 +101,7 @@ impl Zotify {
         if !out.status.success() || !String::from_utf8_lossy(&out.stdout).contains("zotify") {
             // The last line of Python's traceback says why.
             let stderr = String::from_utf8_lossy(&out.stderr);
-            match stderr.lines().rev().map(str::trim).find(|l| !l.is_empty()) {
+            match stderr.lines().rev().map(str::trim).find(|l| said_by_zotify(l)) {
                 Some(why) => bail!("doesn't start: {why}"),
                 None => bail!("doesn't start"),
             }
@@ -313,11 +313,7 @@ fn saved_file(root: &Path) -> Option<PathBuf> {
 
 /// Why zotify saved nothing, from what it said.
 fn failure(said: &str) -> String {
-    let lines: Vec<&str> = said
-        .lines()
-        .map(str::trim_end)
-        .filter(|l| !l.trim().is_empty())
-        .collect();
+    let lines: Vec<&str> = said.lines().map(str::trim_end).filter(|l| said_by_zotify(l)).collect();
     let has = |needle: &str| lines.iter().any(|l| l.contains(needle));
     if has("SONG IS UNAVAILABLE") {
         return "Spotify can't play this song here (not available in your country?)".into();
@@ -347,6 +343,14 @@ fn failure(said: &str) -> String {
     }
 }
 
+/// Not an empty line, nor the one the zotify that comes with Utako (frozen by PyInstaller) adds
+/// after a crash: "[PYI-1234:ERROR] Failed to execute script 'zotify-main' due to unhandled
+/// exception!".
+fn said_by_zotify(line: &str) -> bool {
+    let line = line.trim();
+    !line.is_empty() && !line.starts_with("[PYI-")
+}
+
 fn spawn_error(e: std::io::Error) -> anyhow::Error {
     if e.kind() == std::io::ErrorKind::NotFound {
         anyhow::Error::new(NotInstalled)
@@ -355,14 +359,12 @@ fn spawn_error(e: std::io::Error) -> anyhow::Error {
     }
 }
 
-/// How to get zotify on this system.
+/// How to get zotify on this system: the Windows and macOS apps come with it.
 pub fn install_hint() -> String {
     if cfg!(target_os = "linux") {
         format!("Install it with: sudo pacman -S --needed python-pipx git && pipx install {SOURCE}")
-    } else if cfg!(target_os = "macos") {
-        format!("Install it with: brew install pipx git && pipx install {SOURCE}")
     } else {
-        format!("Install Python and Git, then run: py -m pip install --user pipx && py -m pipx install {SOURCE}")
+        crate::tools::install_hint("zotify")
     }
 }
 
@@ -453,6 +455,14 @@ mod tests {
             "zotify: ModuleNotFoundError: No module named 'x'"
         );
         assert_eq!(failure(""), "zotify saved nothing");
+        // The frozen zotify's own last line after a crash isn't the reason.
+        assert_eq!(
+            failure(
+                "Traceback (most recent call last):\nKeyError: 'items'\n\
+                 [PYI-32489:ERROR] Failed to execute script 'zotify-main' due to unhandled exception!"
+            ),
+            "zotify: KeyError: 'items'"
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 ; Inno Setup script for the Windows installer.
 ; Built by .github/workflows/release.yml:  ISCC /DAppVersion=0.2.0 /DStage=<folder> utako.iss
-; <Stage> holds multimusic.exe, tools\ (mpv, yt-dlp, deno, ffmpeg, ffprobe), fonts\ and the license.
+; <Stage> holds multimusic.exe, tools\ (mpv, yt-dlp, deno, ffmpeg, ffprobe, and zotify\ in a folder
+; of its own), fonts\ and the license.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -15,9 +16,9 @@ AppName=Utako
 AppVersion={#AppVersion}
 AppVerName=Utako {#AppVersion}
 AppPublisher=v0-0x
-AppPublisherURL=https://github.com/v0-0x/sumo-music
-AppSupportURL=https://github.com/v0-0x/sumo-music/issues
-AppUpdatesURL=https://github.com/v0-0x/sumo-music/releases
+AppPublisherURL=https://github.com/v0-0x/Utako
+AppSupportURL=https://github.com/v0-0x/Utako/issues
+AppUpdatesURL=https://github.com/v0-0x/Utako/releases
 ; Installed for the current user: no administrator prompt, and updates install silently.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
