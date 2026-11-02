@@ -1,6 +1,7 @@
 //! Talking to a media server: signed requests and checked answers (identity.rs), and the few
 //! things Utako asks of it. What a music side answers is in docs/media-server.md.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -309,6 +310,74 @@ impl Client {
         self.identity.open_from(&server.host, &s.sealed)
     }
 
+    /// Saves the server's file `path` as `dest`, as it comes (a big FLAC never sits in memory),
+    /// with the share done so far going to `progress`. Its answer must be signed by the
+    /// server; it gives up when the server stops sending for a minute.
+    pub async fn download(
+        &self,
+        server: &Server,
+        path: &str,
+        dest: &Path,
+        progress: &(dyn Fn(f32) + Send + Sync),
+    ) -> Result<u64> {
+        use tokio::io::AsyncWriteExt;
+        // A ticket, as playback asks for the file: what the music side serves files for.
+        let uri = format!("/api/peer/local/file?path={}", query_escape(path));
+        let signed = self
+            .identity
+            .sign(&server.host, "GET", &uri, b"", &self.name, 0, 0, now(), true)?;
+        let mut req = self
+            .http
+            .get(format!("{}{uri}", server.base))
+            // The whole song, however long it takes; a stall is caught below.
+            .timeout(Duration::from_secs(6 * 60 * 60));
+        for (name, value) in &signed.headers {
+            req = req.header(*name, value);
+        }
+        let mut resp = req
+            .send()
+            .await
+            .with_context(|| format!("{} didn't answer", server.name))?;
+        let status = resp.status();
+        let header = |name: &str| {
+            resp.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        };
+        let (date, reply) = (header("Date"), header(HEADER_REPLY));
+        if !status.is_success() {
+            let bytes = crate::http::read_capped(resp, 64 << 10).await.unwrap_or_default();
+            bail!("{}", error_text(status.as_u16(), &bytes));
+        }
+        self.identity
+            .check_reply(&server.host, &signed.nonce, &date, &reply)
+            .map_err(|e| anyhow!("{}: {e}", server.name))?;
+        let total = resp.content_length().filter(|n| *n > 0);
+        let mut file = tokio::fs::File::create(dest)
+            .await
+            .with_context(|| format!("couldn't write {}", dest.display()))?;
+        let mut done = 0u64;
+        loop {
+            let chunk = tokio::time::timeout(Duration::from_secs(60), resp.chunk())
+                .await
+                .map_err(|_| anyhow!("{} stopped sending", server.name))?
+                .with_context(|| format!("{} stopped sending", server.name))?;
+            let Some(chunk) = chunk else { break };
+            file.write_all(&chunk).await?;
+            done += chunk.len() as u64;
+            if let Some(total) = total {
+                progress((done as f32 / total as f32).min(1.0));
+            }
+        }
+        file.flush().await?;
+        if total.is_some_and(|t| done < t) {
+            bail!("{} sent only part of the song", server.name);
+        }
+        Ok(done)
+    }
+
     /// A song's cover on the server (`None`: it has none).
     pub async fn art(&self, server: &Server, path: &str) -> Result<Option<Vec<u8>>> {
         let uri = format!("/api/peer/music/art?path={}", query_escape(path));
@@ -448,6 +517,51 @@ mod tests {
         assert_eq!(base_url("pi.local"), "http://pi.local:43411");
         assert_eq!(base_url("http://192.168.1.5/"), "http://192.168.1.5:43411");
         assert_eq!(base_url("192.168.1.5:5000"), "http://192.168.1.5:5000");
+    }
+
+    /// Downloads a song from a stand-in music side made from mediaserver's own share code
+    /// (UTAKO_STANDIN is its address; it serves the files of a folder here, and lets a device in
+    /// at /test/allow): the file arrives whole, byte for byte, in a signed answer.
+    /// `UTAKO_STANDIN=127.0.0.1:43499 cargo test -- --ignored download_from_stand_in`
+    #[tokio::test]
+    #[ignore]
+    async fn download_from_stand_in() {
+        let address = std::env::var("UTAKO_STANDIN").expect("UTAKO_STANDIN");
+        let client = Client::new(
+            Arc::new(Identity::from_private(rand::random())),
+            "Utako download test".into(),
+        );
+        let base = base_url(&address);
+        let server = client.whoami(&base).await.unwrap();
+        reqwest::get(format!("{base}/test/allow?id={}", client.identity.id))
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let lib = client.library(&server).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for song in &lib.tracks {
+            let dest = dir.path().join("song");
+            let seen = std::sync::Mutex::new(0.0f32);
+            let size = client
+                .download(&server, &song.path, &dest, &|p| *seen.lock().unwrap() = p)
+                .await
+                .unwrap();
+            // The stand-in serves files of this computer, so the original is here to compare.
+            let original = std::fs::read(&song.path).unwrap();
+            assert_eq!(size as usize, original.len());
+            assert!(
+                std::fs::read(&dest).unwrap() == original,
+                "{} arrived changed",
+                song.path
+            );
+            assert_eq!(*seen.lock().unwrap(), 1.0);
+        }
+        // A song it doesn't have is refused.
+        let missing = client
+            .download(&server, "/no/such/song.flac", &dir.path().join("x"), &|_| {})
+            .await;
+        assert!(missing.is_err());
     }
 
     /// Against a real mediaserver's music side (UTAKO_SERVER is its address; UTAKO_DASHBOARD

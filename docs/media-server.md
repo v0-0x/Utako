@@ -120,6 +120,8 @@ Each track looks like this:
 - It must support `Range`, or seeking won't work.
 - Utako signs a new ticket every time a song starts. On iPhone the app's own player sends
   the same headers.
+- Downloading a song (to keep it on the device) is the same request, made once from start to
+  end; Utako checks the answer's `X-Kumo-Peer-Reply` and that it got `Content-Length` bytes.
 
 ### settings and logins
 
@@ -180,5 +182,4 @@ These aren't in Utako yet:
 
 - Settings that sync on their own. That would need an `updatedAt` comparison, and the
   endpoints above already carry it.
-- Downloading songs for offline play, on iPhone in particular.
 - Uploads from the iPhone app (it has no file picker for them).

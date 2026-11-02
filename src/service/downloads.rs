@@ -107,7 +107,15 @@ impl Service {
                 && self.cfg.spotify.enabled
                 && self.spotify_auth.has_login();
             let spotify = if wants_spotify { self.spotify_session() } else { None };
-            let to_server = self.download_server().map(|server| downloader::ToServer {
+            // A song from the media server is saved here (it's on the server already).
+            let to_server = self
+                .download_server()
+                .filter(|_| track.source != Source::Server)
+                .map(|server| downloader::ToServer {
+                    client: self.hub.clone(),
+                    server,
+                });
+            let from_server = self.server.clone().map(|server| downloader::ToServer {
                 client: self.hub.clone(),
                 server,
             });
@@ -127,6 +135,7 @@ impl Service {
                 // iOS has no ffmpeg.
                 spotify_mp3: d.spotify_mp3 && !cfg!(target_os = "ios"),
                 to_server,
+                from_server,
             };
             // A song for the media server is only made here, in the cache.
             let dir = if downloader.to_server.is_some() {

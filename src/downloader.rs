@@ -45,6 +45,8 @@ pub struct Downloader {
     pub spotify_mp3: bool,
     /// Send the song to the media server instead of keeping it on this device.
     pub to_server: Option<ToServer>,
+    /// The media server connected: where its own songs are downloaded from.
+    pub from_server: Option<ToServer>,
 }
 
 /// The media server a download goes to.
@@ -78,9 +80,15 @@ impl Downloader {
 
     async fn download_in(&self, track: &Track, dir: &Path, work: &Path, progress: Progress<'_>) -> Result<Saved> {
         // Going to the media server, the download is the first part of the bar.
-        let share = if self.to_server.is_some() { DOWNLOAD_SHARE } else { 1.0 };
+        let share = if self.to_server.is_some() && track.source != Source::Server {
+            DOWNLOAD_SHARE
+        } else {
+            1.0
+        };
         let scaled = move |p: f32| progress(p * share);
         let fetching: Progress = &scaled;
+        // A media server song's cover: the one already fetched for the library, or the server's.
+        let mut server_cover = None;
         let (path, mut meta, from, keep_existing) = match track.source {
             Source::SoundCloud => {
                 let saved = self.soundcloud.download(track, work, fetching).await?;
@@ -103,7 +111,31 @@ impl Downloader {
                 (path, self.details(track).await, "YouTube".to_string(), false)
             }
             Source::Local => bail!("this song is already a file on your computer"),
-            Source::Server => bail!("this song is already on your media server"),
+            Source::Server => {
+                let on = self
+                    .from_server
+                    .as_ref()
+                    .filter(|s| track.id.starts_with(&format!("server:{}:", s.server.host.id)))
+                    .ok_or_else(|| anyhow!("the media server this song is on isn't connected"))?;
+                let path = work.join(format!("server.{}", extension_of(&track.uri)));
+                on.client
+                    .download(&on.server, &track.uri, &path, fetching)
+                    .await
+                    .with_context(|| format!("couldn't download it from {}", on.server.name))?;
+                server_cover = match track.art.as_deref().filter(|a| Path::new(a).is_file()) {
+                    Some(art) => tokio::fs::read(art).await.ok(),
+                    None => on.client.art(&on.server, &track.uri).await.ok().flatten(),
+                };
+                // The server's file as it is: its own tags win, only what it lacks is filled in.
+                let meta = Metadata {
+                    album_artist: track.album_artist.clone(),
+                    disc: track.disc_no,
+                    cover_urls: Vec::new(),
+                    url: String::new(),
+                    ..basic_metadata(track)
+                };
+                (path, meta, on.server.name.clone(), true)
+            }
         };
         if meta.album.trim().is_empty() {
             // Released on its own: a single.
@@ -114,7 +146,10 @@ impl Downloader {
                 meta.lyrics = lyrics::to_tag_text(&found);
             }
         }
-        let cover = self.cover(&meta.cover_urls).await;
+        let cover = match server_cover {
+            Some(cover) => Some(cover),
+            None => self.cover(&meta.cover_urls).await,
+        };
         if make_taggable(&path).await {
             let (file, meta_, cover_) = (path.clone(), meta.clone(), cover);
             let tagged =
@@ -125,7 +160,8 @@ impl Downloader {
                 Err(e) => warn!("tagging {} failed: {e}", path.display()),
             }
         }
-        if let Some(to) = &self.to_server {
+        // A server song isn't sent back to the server it came from.
+        if let Some(to) = self.to_server.as_ref().filter(|_| track.source != Source::Server) {
             let place = self.send(to, track, &path, &meta, progress).await?;
             info!("sent \"{}\" ({from}) to {} as {place}", meta.title, to.server.name);
             return Ok(Saved {
@@ -446,6 +482,22 @@ async fn is_fragmented_mp4(path: &Path) -> bool {
 }
 
 /// Moves a finished download from its work folder into `dir` as "Artist - Title.ext".
+/// A file's extension from its path on the server ("mp3" when it has none).
+fn extension_of(path: &str) -> String {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    match name.rsplit_once('.') {
+        Some((stem, ext))
+            if !stem.is_empty()
+                && !ext.is_empty()
+                && ext.len() <= 5
+                && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            ext.to_ascii_lowercase()
+        }
+        _ => "mp3".into(),
+    }
+}
+
 async fn move_into(path: &Path, dir: &Path, stem: &str) -> Result<PathBuf> {
     let ext = path
         .extension()
@@ -482,6 +534,16 @@ pub const WORK_PREFIX: &str = ".multimusic-";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_file_extensions() {
+        assert_eq!(extension_of("/music/Artist/01 Song.FLAC"), "flac");
+        assert_eq!(extension_of("C:\\Music\\a.m4a"), "m4a");
+        // A dot in a folder, not the file; a name that's only a dot; nonsense: mp3.
+        assert_eq!(extension_of("/music/Mr. Big/Song"), "mp3");
+        assert_eq!(extension_of("/music/.hidden"), "mp3");
+        assert_eq!(extension_of("/music/a.b c"), "mp3");
+    }
 
     #[test]
     fn basic_details_from_the_library() {
