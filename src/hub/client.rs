@@ -120,6 +120,9 @@ pub enum Uploaded {
 /// The most a piece of an upload holds (the server's limit too).
 pub const MAX_PIECE: u64 = 8 << 20;
 
+/// The pieces Utako sends: smaller than the server takes, so a progress bar moves.
+pub const UPLOAD_PIECE: u64 = 2 << 20;
+
 /// A server found or typed: where it is and who it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server {

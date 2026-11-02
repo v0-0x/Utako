@@ -1307,12 +1307,18 @@ impl eframe::App for App {
                         } else {
                             crate::config::expand_home(custom)
                         };
+                        let server = &cx.feed.server;
+                        let download_server =
+                            (self.cfg.downloads.to_server && self.cfg.server.enabled && server.uploads)
+                                .then(|| server.name.clone());
                         let mut state = views::ViewState {
                             view: &self.view,
                             download_dir: &download_dir,
                             download_custom: !custom.is_empty(),
+                            download_server,
                             ytdlp: (self.cfg.downloads.youtube && !cfg!(target_os = "ios"))
                                 .then_some(self.cfg.downloads.ytdlp_path.as_str()),
+                            zotify: (!cfg!(target_os = "ios")).then_some(self.cfg.downloads.zotify_path.as_str()),
                             search_text: &self.search_text,
                             search_cache: &mut self.search_cache,
                             filter_text: &mut self.filter_text,

@@ -30,6 +30,7 @@ use crate::providers::apple_music::{self, AppleMusicApi};
 use crate::providers::soundcloud::{self, ScResolved, ScUser, SoundCloud};
 use crate::providers::spotify_api::{self, SpotifyApi, SpotifyPlaylistMeta};
 use crate::providers::youtube::{self, YtDlp};
+use crate::zotify::Zotify;
 
 mod downloads;
 mod pages;
@@ -197,8 +198,9 @@ pub enum Command {
     Search(String),
     /// Load an artist / album / playlist / song page: a page key or a pasted link.
     OpenPage(String),
-    /// Save songs as files: SoundCloud songs directly, Spotify and Apple Music songs from a
-    /// matching YouTube or SoundCloud upload.
+    /// Save songs as files: SoundCloud songs directly, Spotify songs from Spotify (with zotify),
+    /// Apple Music songs from a matching YouTube or SoundCloud upload. They go to the media
+    /// server instead when that's on in Settings and it's connected.
     Download(Vec<Track>),
     /// Remove finished and failed entries from the Downloads list.
     ClearDownloads,
@@ -208,6 +210,8 @@ pub enum Command {
     CancelDownloads,
     /// Find out whether this yt-dlp program runs (answer in `Feed::ytdlp`).
     CheckYtDlp(String),
+    /// Find out whether this zotify program runs (answer in `Feed::zotify`).
+    CheckZotify(String),
     UpdateConfig(Box<Config>),
     Raise,
     Quit,
@@ -386,10 +390,12 @@ pub enum DownloadState {
     Queued,
     /// Progress 0..=1.
     Running(f32),
-    /// `from`: where the audio came from ("original file", "YouTube", …).
+    /// `from`: where the audio came from ("original file", "YouTube", …). Sent to the media
+    /// server, `server` is its name and `path` the song's place there.
     Done {
         path: PathBuf,
         from: String,
+        server: Option<String>,
     },
     Failed(String),
 }
@@ -429,6 +435,8 @@ pub struct Feed {
     pub downloaded: HashMap<String, PathBuf>,
     /// The yt-dlp program last checked, and its version or why it doesn't run.
     pub ytdlp: Option<(String, Result<String, String>)>,
+    /// The zotify program last checked, and why it doesn't run.
+    pub zotify: Option<(String, Result<(), String>)>,
     pub spotify: AccountStatus,
     /// True while a Spotify login is stored, whatever the current status message says.
     pub spotify_logged_in: bool,
@@ -639,6 +647,10 @@ enum Internal {
     YtDlpChecked {
         program: String,
         result: Result<String, String>,
+    },
+    ZotifyChecked {
+        program: String,
+        result: Result<(), String>,
     },
     /// Status text while the Spotify library syncs.
     SyncProgress(String),
@@ -854,6 +866,8 @@ pub struct Service {
     download_seq: u64,
     /// Title and error (if any) of each download finished since the queue was last empty.
     download_batch: Vec<(String, Option<String>)>,
+    /// The media server songs of that batch were sent to.
+    download_batch_server: Option<String>,
 }
 
 /// Starts the service on its own thread, driving futures on `rt`. Returns the command sender.
@@ -1009,6 +1023,7 @@ impl Service {
             download_jobs: HashMap::new(),
             download_seq: 0,
             download_batch: Vec::new(),
+            download_batch_server: None,
             cfg,
         };
         let (a, b, c) = receivers;
@@ -1488,6 +1503,20 @@ impl Service {
                         }
                     });
                     let _ = tx.send(Internal::YtDlpChecked { program, result });
+                });
+            }
+            Command::CheckZotify(program) => {
+                let tx = self.internal_tx.clone();
+                let dir = self.paths.spotify_dir();
+                tokio::spawn(async move {
+                    let result = Zotify::new(&program, "", &dir).check().await.map_err(|e| {
+                        if e.is::<crate::zotify::NotInstalled>() {
+                            "isn't installed".to_string()
+                        } else {
+                            format!("{e:#}")
+                        }
+                    });
+                    let _ = tx.send(Internal::ZotifyChecked { program, result });
                 });
             }
             Command::UpdateConfig(cfg) => self.update_config(*cfg).await,
@@ -2130,6 +2159,10 @@ impl Service {
             Internal::DownloadDone { track, result } => self.download_finished(track, result),
             Internal::YtDlpChecked { program, result } => {
                 self.shared.feed.write().unwrap().ytdlp = Some((program, result));
+                self.shared.repaint();
+            }
+            Internal::ZotifyChecked { program, result } => {
+                self.shared.feed.write().unwrap().zotify = Some((program, result));
                 self.shared.repaint();
             }
             Internal::LastfmSession(r) => match r {

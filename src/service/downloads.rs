@@ -1,4 +1,5 @@
-//! Downloading songs from SoundCloud, Spotify and Apple Music.
+//! Downloading songs from SoundCloud, Spotify and Apple Music, to this device or to the media
+//! server.
 
 use super::*;
 
@@ -89,7 +90,16 @@ impl Service {
                 && self.cfg.spotify.enabled
                 && self.spotify_auth.has_login();
             let spotify = if wants_spotify { self.spotify_session() } else { None };
+            let to_server = self.download_server().map(|server| downloader::ToServer {
+                client: self.hub.clone(),
+                server,
+            });
             let d = &self.cfg.downloads;
+            // zotify borrows Utako's Spotify login; iOS can't run it.
+            let zotify = (!cfg!(target_os = "ios") && self.cfg.spotify.enabled && self.spotify_auth.has_user_login())
+                .then(|| {
+                    Zotify::new(&d.zotify_path, &d.zotify_args, &self.paths.spotify_dir()).with_mp3(d.spotify_mp3)
+                });
             let downloader = Downloader {
                 soundcloud: self.soundcloud.clone(),
                 http: self.http.clone(),
@@ -100,8 +110,15 @@ impl Service {
                 // A YouTube video is saved with yt-dlp whatever the setting.
                 ytdlp: ((d.youtube || track.source == Source::YouTube) && !cfg!(target_os = "ios"))
                     .then(|| YtDlp::new(&d.ytdlp_path, &d.ytdlp_args).with_mp3(d.youtube_mp3)),
+                zotify,
+                to_server,
             };
-            let dir = self.cfg.download_dir(track.source);
+            // A song for the media server is only made here, in the cache.
+            let dir = if downloader.to_server.is_some() {
+                self.server_download_dir()
+            } else {
+                self.cfg.download_dir(track.source)
+            };
             self.download_seq += 1;
             let work = dir.join(downloader::work_dir_name(self.download_seq));
             let job_work = work.clone();
@@ -144,7 +161,26 @@ impl Service {
     pub(super) fn download_finished(&mut self, track: Track, result: Result<Saved>) {
         self.download_jobs.remove(&track.id);
         let state = match result {
-            Ok(Saved { path, from }) => {
+            Ok(Saved {
+                path,
+                from,
+                server: Some(server),
+            }) => {
+                self.download_batch.push((track.title.clone(), None));
+                self.download_batch_server = Some(server.clone());
+                // Its library has the song a moment later.
+                self.server_library_soon();
+                DownloadState::Done {
+                    path,
+                    from,
+                    server: Some(server),
+                }
+            }
+            Ok(Saved {
+                path,
+                from,
+                server: None,
+            }) => {
                 let _ = self
                     .db
                     .set_kv(&format!("{DOWNLOAD_KEY}{}", track.id), &path.to_string_lossy());
@@ -156,7 +192,11 @@ impl Service {
                     .insert(track.id.clone(), path.clone());
                 self.add_downloaded_file(&path);
                 self.download_batch.push((track.title.clone(), None));
-                DownloadState::Done { path, from }
+                DownloadState::Done {
+                    path,
+                    from,
+                    server: None,
+                }
             }
             Err(e) => {
                 let error = friendly_download_error(&e);
@@ -174,19 +214,24 @@ impl Service {
         };
         if idle {
             let batch = std::mem::take(&mut self.download_batch);
+            let to = self
+                .download_batch_server
+                .take()
+                .map(|server| format!(" to {server}"))
+                .unwrap_or_default();
             let failed: Vec<_> = batch.iter().filter(|(_, e)| e.is_some()).collect();
             let ok = batch.len() - failed.len();
             match (ok, failed.as_slice()) {
                 (0, []) => {}
-                (1, []) => self.shared.info(format!("Downloaded “{}”", batch[0].0)),
-                (n, []) => self.shared.info(format!("Downloaded {n} songs")),
+                (1, []) => self.shared.info(format!("Downloaded “{}”{to}", batch[0].0)),
+                (n, []) => self.shared.info(format!("Downloaded {n} songs{to}")),
                 (0, [(title, Some(e))]) => self.shared.error(format!("Couldn't download “{title}”: {e}")),
                 (0, f) => self
                     .shared
                     .error(format!("{} downloads failed (see Downloads)", f.len())),
                 (n, f) => self
                     .shared
-                    .error(format!("Downloaded {n} songs, {} failed (see Downloads)", f.len())),
+                    .error(format!("Downloaded {n} songs{to}, {} failed (see Downloads)", f.len())),
             }
         }
         self.pump_downloads();
@@ -233,8 +278,14 @@ impl Service {
             .any(|d| d.state.active())
         {
             self.download_batch.clear();
+            self.download_batch_server = None;
         }
         self.pump_downloads();
+    }
+
+    /// Where songs for the media server are made before they're sent.
+    fn server_download_dir(&self) -> PathBuf {
+        self.paths.cache_dir.join("downloads")
     }
 
     /// Clears work folders a crash or power cut left in the download folders.
@@ -242,6 +293,7 @@ impl Service {
         let mut dirs: Vec<PathBuf> = [Source::SoundCloud, Source::Spotify, Source::AppleMusic]
             .into_iter()
             .map(|s| self.cfg.download_dir(s))
+            .chain([self.server_download_dir()])
             .collect();
         dirs.dedup();
         tokio::task::spawn_blocking(move || {
@@ -357,6 +409,7 @@ impl Service {
                 let mut feed = self.shared.feed.write().unwrap();
                 feed.server.status.clear();
                 feed.server.allowed = false;
+                feed.server.name.clear();
             }
             // Its playlist goes when its music is turned off (and comes back when turned on).
             if !(self.cfg.server.enabled && self.cfg.server.library) {
@@ -469,7 +522,11 @@ pub(super) fn friendly_download_error(e: &anyhow::Error) -> String {
             .is_some_and(|r| r.is_connect() || r.is_timeout())
     });
     if offline {
-        return "Couldn't reach SoundCloud (offline?)".into();
+        // The media server it was going to, else SoundCloud (where found songs come from).
+        return match e.to_string().strip_prefix("couldn't send it to ") {
+            Some(server) => format!("Couldn't reach {server} (offline?)"),
+            None => "Couldn't reach SoundCloud (offline?)".into(),
+        };
     }
     // Drop wrappers that only repeat which song it was.
     let parts: Vec<String> = e

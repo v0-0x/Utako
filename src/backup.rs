@@ -171,10 +171,10 @@ pub fn is_settings_file(path: &Path) -> bool {
 }
 
 /// The imported settings, adjusted for this computer: library and download folders that don't
-/// exist here, the mpv and yt-dlp programs and the audio devices stay as they are. A file
-/// without keys keeps the keys and logins you have. What decides which programs run (yt-dlp's
-/// extra options) and where updates come from is never taken from a file: one someone sends
-/// could otherwise run their commands or install their build.
+/// exist here, the mpv, yt-dlp and zotify programs and the audio devices stay as they are. A
+/// file without keys keeps the keys and logins you have. What decides which programs run (yt-dlp's
+/// and zotify's extra options) and where updates come from is never taken from a file: one
+/// someone sends could otherwise run their commands or install their build.
 pub fn merge_config(current: &Config, imported: &SettingsFile) -> Config {
     let mut cfg = imported.config.clone();
     if !imported.has_keys {
@@ -203,6 +203,8 @@ pub fn merge_config(current: &Config, imported: &SettingsFile) -> Config {
     cfg.playback.audio_device = current.playback.audio_device.clone();
     cfg.downloads.ytdlp_path = current.downloads.ytdlp_path.clone();
     cfg.downloads.ytdlp_args = current.downloads.ytdlp_args.clone();
+    cfg.downloads.zotify_path = current.downloads.zotify_path.clone();
+    cfg.downloads.zotify_args = current.downloads.zotify_args.clone();
     cfg.spotify.audio_output = current.spotify.audio_output.clone();
     cfg.updates = current.updates.clone();
     cfg
@@ -426,6 +428,8 @@ mod tests {
         from.playback.mpv_path = "/usr/bin/mpv".into();
         from.playback.volume = 33.0;
         from.downloads.ytdlp_args = "--exec 'touch /tmp/owned'".into();
+        from.downloads.zotify_path = "/tmp/not-zotify".into();
+        from.downloads.zotify_args = "--root-path=/tmp/owned".into();
         from.updates.repo = "someone/fake-sumo".into();
         from.updates.check = false;
         let file = SettingsFile {
@@ -448,6 +452,8 @@ mod tests {
         assert_eq!(cfg.playback.mpv_path, current.playback.mpv_path);
         // Nothing in a file decides which commands run or where updates come from.
         assert_eq!(cfg.downloads.ytdlp_args, current.downloads.ytdlp_args);
+        assert_eq!(cfg.downloads.zotify_path, current.downloads.zotify_path);
+        assert_eq!(cfg.downloads.zotify_args, current.downloads.zotify_args);
         assert_eq!(cfg.updates, current.updates);
 
         // A file without keys keeps yours.

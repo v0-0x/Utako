@@ -18,7 +18,8 @@ optdepends=('pipewire-pulse: Spotify output on PipeWire desktops (usually alread
             'noto-fonts-cjk: Japanese, Chinese and Korean song titles'
             'inter-font: nicer interface font'
             'discord: Rich Presence (also works with Vesktop / arRPC)'
-            'yt-dlp: YouTube music videos, and Spotify and Apple Music downloads (found on YouTube)'
+            'yt-dlp: YouTube music videos, and Apple Music downloads (found on YouTube)'
+            'python-pipx: to install zotify (pipx install git+https://github.com/zotify-dev/zotify), which downloads Spotify songs from Spotify'
             'deno: unlocks YouTube video links for yt-dlp (node or bun work too)')
 # The app is called Utako (Sumo until 0.9.0); the package keeps its first name so installed copies
 # update in place.

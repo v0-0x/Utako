@@ -483,9 +483,10 @@ fn volume_to_u16(volume: f32) -> u16 {
     (gain * u16::MAX as f32).round() as u16
 }
 
-/// Removes stored librespot credentials (used on logout).
+/// Removes stored librespot credentials, and zotify's copy of them (used on logout).
 pub fn clear_credentials(dir: &Path) {
     let _ = std::fs::remove_file(dir.join("credentials.json"));
+    let _ = std::fs::remove_file(dir.join(crate::zotify::ZOTIFY_LOGIN));
 }
 
 #[cfg(test)]

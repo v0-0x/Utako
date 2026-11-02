@@ -154,6 +154,12 @@ The same as the Aniko and KumoBox apps' uploads to a server (mediaserver's
   library reads it a moment later, and `files` changes.
 - A folder keeps its name: `Album/01 Song.flac`. Utako sends its songs, covers, lyrics
   (`.lrc`) and cue sheets, and leaves hidden files behind.
+- Downloads go the same way when *Send downloads to the media server* is on (Settings ›
+  Downloads) and the server lets this device upload: each song is made and tagged in Utako's
+  cache, sent as `<service>/Artist - Song.ext` (`Spotify/`, `SoundCloud/`, `Apple Music/`,
+  `YouTube/`) into the first music folder, then removed here. A 409 (another file of that
+  name) fails that download rather than replacing the file. Utako asks for the library again
+  a few seconds later, so the song shows up in the server's playlist.
 
 ## What Utako keeps (cache)
 

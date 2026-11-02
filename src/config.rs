@@ -228,13 +228,23 @@ pub struct DownloadsConfig {
     /// Where downloads go. Empty = "SoundCloud", "Spotify" and "Apple Music" folders in the
     /// first library folder.
     pub folder: String,
-    /// Look for Spotify and Apple Music songs on YouTube (needs yt-dlp) before SoundCloud.
+    /// Look for Apple Music songs (and Spotify songs while zotify isn't installed) on YouTube
+    /// (needs yt-dlp) before SoundCloud.
     pub youtube: bool,
     pub ytdlp_path: String,
     /// Extra yt-dlp options, e.g. `--cookies-from-browser firefox` for YouTube's bot check.
     pub ytdlp_args: String,
     /// Save YouTube downloads as MP3 instead of YouTube's own Opus / AAC.
     pub youtube_mp3: bool,
+    /// zotify, which saves Spotify songs straight from Spotify.
+    pub zotify_path: String,
+    /// Extra zotify options, e.g. `--download-real-time=True`.
+    pub zotify_args: String,
+    /// Save Spotify downloads as MP3 instead of Spotify's own Ogg Vorbis.
+    pub spotify_mp3: bool,
+    /// Send downloads to the media server while it's connected (and lets this device upload),
+    /// instead of keeping them on this device.
+    pub to_server: bool,
     /// Embed lyrics (from LRCLIB, time-synced when available).
     pub lyrics: bool,
 }
@@ -247,6 +257,10 @@ impl Default for DownloadsConfig {
             ytdlp_path: "yt-dlp".into(),
             ytdlp_args: String::new(),
             youtube_mp3: false,
+            zotify_path: "zotify".into(),
+            zotify_args: String::new(),
+            spotify_mp3: false,
+            to_server: false,
             lyrics: true,
         }
     }

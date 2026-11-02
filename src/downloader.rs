@@ -1,15 +1,19 @@
-//! Saving songs as files. SoundCloud songs are downloaded directly. Spotify and Apple Music
-//! audio is DRM-protected, so for those the same recording is found on YouTube (with yt-dlp) or
-//! SoundCloud and downloaded from there. Every file is then tagged with the song's details
-//! (from Spotify when it is a Spotify song), its cover and its lyrics.
+//! Saving songs as files. SoundCloud songs are downloaded directly. Spotify songs (and Apple
+//! Music songs matched to Spotify) are saved straight from Spotify by zotify. Apple Music audio
+//! is DRM-protected, so for the others the same recording is found on YouTube (with yt-dlp) or
+//! SoundCloud and downloaded from there; Spotify songs too while zotify isn't installed. Every
+//! file is then tagged with the song's details (from Spotify when it is a Spotify song), its
+//! cover and its lyrics, and kept in the download folder or sent to the media server.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use librespot_core::session::Session;
 use tracing::{info, warn};
 
+use crate::hub::client::{self as hubc, Uploaded};
 use crate::integrations::genius::{self, Match};
 use crate::integrations::lyrics::{self, LyricsFetcher};
 use crate::library::tags::{self, Metadata};
@@ -17,8 +21,12 @@ use crate::model::{Source, Track};
 use crate::providers::soundcloud::{self, DownloadKind, SoundCloud};
 use crate::providers::spotify_internal;
 use crate::providers::youtube::{self, YtDlp};
+use crate::zotify::{self, Zotify};
 
 pub type Progress<'a> = &'a (dyn Fn(f32) + Send + Sync);
+
+/// How much of the progress bar the download takes when the song then goes to the media server.
+const DOWNLOAD_SHARE: f32 = 0.8;
 
 pub struct Downloader {
     pub soundcloud: Arc<SoundCloud>,
@@ -31,14 +39,28 @@ pub struct Downloader {
     pub spotify_twin: Option<Track>,
     /// `None`: don't look on YouTube.
     pub ytdlp: Option<YtDlp>,
+    /// Saves Spotify songs straight from Spotify. `None`: not logged in to Spotify, or a system
+    /// that can't run it (iOS).
+    pub zotify: Option<Zotify>,
+    /// Send the song to the media server instead of keeping it on this device.
+    pub to_server: Option<ToServer>,
+}
+
+/// The media server a download goes to.
+pub struct ToServer {
+    pub client: Arc<hubc::Client>,
+    pub server: hubc::Server,
 }
 
 /// A saved song.
 #[derive(Debug)]
 pub struct Saved {
+    /// The file, or its place on the media server ("Spotify/Artist - Song.ogg").
     pub path: PathBuf,
     /// Where the audio came from, for the Downloads list.
     pub from: String,
+    /// The media server it was sent to.
+    pub server: Option<String>,
 }
 
 impl Downloader {
@@ -54,16 +76,20 @@ impl Downloader {
     }
 
     async fn download_in(&self, track: &Track, dir: &Path, work: &Path, progress: Progress<'_>) -> Result<Saved> {
+        // Going to the media server, the download is the first part of the bar.
+        let share = if self.to_server.is_some() { DOWNLOAD_SHARE } else { 1.0 };
+        let scaled = move |p: f32| progress(p * share);
+        let fetching: Progress = &scaled;
         let (path, mut meta, from, keep_existing) = match track.source {
             Source::SoundCloud => {
-                let saved = self.soundcloud.download(track, work, progress).await?;
+                let saved = self.soundcloud.download(track, work, fetching).await?;
                 let original = saved.kind == DownloadKind::Original;
                 let from = if original { "original file" } else { "SoundCloud" };
                 let meta = upload_details(track, saved.meta).await;
                 (saved.path, meta, from.to_string(), original)
             }
             Source::Spotify | Source::AppleMusic => {
-                let (path, from) = self.find_and_download(track, work, progress).await?;
+                let (path, from) = self.spotify_or_found(track, work, fetching).await?;
                 (path, self.details(track).await, from, false)
             }
             Source::YouTube => {
@@ -72,7 +98,7 @@ impl Downloader {
                     .as_ref()
                     .ok_or_else(|| anyhow!("saving a YouTube video needs yt-dlp"))?;
                 let id = youtube::video_id(&track.id).ok_or_else(|| anyhow!("not a YouTube video"))?;
-                let path = youtube::download(ytdlp, id, work, progress).await?;
+                let path = youtube::download(ytdlp, id, work, fetching).await?;
                 (path, self.details(track).await, "YouTube".to_string(), false)
             }
             Source::Local => bail!("this song is already a file on your computer"),
@@ -98,20 +124,98 @@ impl Downloader {
                 Err(e) => warn!("tagging {} failed: {e}", path.display()),
             }
         }
+        if let Some(to) = &self.to_server {
+            let place = self.send(to, track, &path, &meta, progress).await?;
+            info!("sent \"{}\" ({from}) to {} as {place}", meta.title, to.server.name);
+            return Ok(Saved {
+                path: PathBuf::from(place),
+                from,
+                server: Some(to.server.name.clone()),
+            });
+        }
         let path = move_into(&path, dir, &soundcloud::file_stem(&meta.artist, &meta.title)).await?;
         info!("saved \"{}\" ({from}) to {}", meta.title, path.display());
-        Ok(Saved { path, from })
+        Ok(Saved {
+            path,
+            from,
+            server: None,
+        })
+    }
+
+    /// Sends the finished file into the media server's first music folder, as
+    /// "<service>/Artist - Song.ext", and returns that place.
+    async fn send(
+        &self,
+        to: &ToServer,
+        track: &Track,
+        file: &Path,
+        meta: &Metadata,
+        progress: Progress<'_>,
+    ) -> Result<String> {
+        let target = to
+            .client
+            .upload_target(&to.server)
+            .await
+            .with_context(|| format!("couldn't send it to {}", to.server.name))?;
+        if target.folders.is_empty() {
+            bail!(
+                "{} has no folder for music yet: add one in its dashboard (Music › Library)",
+                to.server.name
+            );
+        }
+        let place = server_place(track.source, file, meta);
+        let total = tokio::fs::metadata(file).await.map(|m| m.len()).unwrap_or(0).max(1);
+        let sent =
+            |have: u64| progress(DOWNLOAD_SHARE + (1.0 - DOWNLOAD_SHARE) * (have as f32 / total as f32).min(1.0));
+        // Cancelling a download stops its task, and this with it.
+        let stop = AtomicBool::new(false);
+        let chunk = target.chunk.min(hubc::UPLOAD_PIECE);
+        let sent = to
+            .client
+            .upload_file(&to.server, 0, &place, file, chunk, &stop, sent)
+            .await
+            .with_context(|| format!("couldn't send it to {}", to.server.name))?;
+        match sent {
+            Uploaded::Sent | Uploaded::AlreadyThere => Ok(place),
+            Uploaded::Different => bail!("{} has another file named “{place}” already", to.server.name),
+        }
+    }
+
+    /// The Spotify song to save: `track` itself, or the Apple Music song's twin on Spotify.
+    fn on_spotify<'a>(&'a self, track: &'a Track) -> Option<&'a Track> {
+        match track.source {
+            Source::Spotify => Some(track),
+            Source::AppleMusic => self.spotify_twin.as_ref().filter(|t| t.source == Source::Spotify),
+            _ => None,
+        }
+    }
+
+    /// Spotify's own audio, through zotify. Without zotify (not installed, not logged in to
+    /// Spotify, or iOS), and for an Apple Music song it couldn't save, the same recording is
+    /// found on YouTube or SoundCloud instead.
+    async fn spotify_or_found(&self, track: &Track, dir: &Path, progress: Progress<'_>) -> Result<(PathBuf, String)> {
+        let id = self.on_spotify(track).and_then(|t| t.id.strip_prefix("spotify:track:"));
+        if let (Some(zotify), Some(id)) = (&self.zotify, id) {
+            match zotify.download(id, dir, progress).await {
+                Ok(path) => return Ok((path, "Spotify".into())),
+                Err(e) if e.is::<zotify::NotInstalled>() => {
+                    info!(
+                        "zotify isn't installed: looking for {} on YouTube and SoundCloud",
+                        track.id
+                    );
+                }
+                Err(e) if track.source == Source::AppleMusic => warn!("zotify for {}: {e:#}", track.id),
+                Err(e) => return Err(e),
+            }
+        }
+        self.find_and_download(track, dir, progress).await
     }
 
     /// The song's details: everything Spotify knows for Spotify songs, else what the library
     /// has.
     async fn details(&self, track: &Track) -> Metadata {
         // An Apple Music song Utako already matched to Spotify gets Spotify's details.
-        let on_spotify = match track.source {
-            Source::Spotify => Some(track),
-            _ => self.spotify_twin.as_ref().filter(|t| t.source == Source::Spotify),
-        };
-        if let Some(spotify_track) = on_spotify {
+        if let Some(spotify_track) = self.on_spotify(track) {
             if let Some(session) = &self.spotify {
                 match spotify_internal::track_details(session, &spotify_track.id).await {
                     Ok(meta) if !meta.title.is_empty() => return meta,
@@ -325,6 +429,20 @@ async fn move_into(path: &Path, dir: &Path, stem: &str) -> Result<PathBuf> {
         .with_context(|| format!("couldn't save it in {}", dir.display()))
 }
 
+/// Where a download goes on the media server: "<service>/Artist - Song.ext", in its first
+/// music folder (as the download folder here has a folder for each service).
+fn server_place(source: Source, file: &Path, meta: &Metadata) -> String {
+    let ext = file
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| "mp3".into());
+    format!(
+        "{}/{}.{ext}",
+        source.label(),
+        soundcloud::file_stem(&meta.artist, &meta.title)
+    )
+}
+
 /// Name of the work folder of download number `n`. Anything named like this in a download
 /// folder is a leftover (the scanner skips it, and it is cleared on start).
 pub fn work_dir_name(n: u64) -> String {
@@ -357,6 +475,23 @@ mod tests {
         assert_eq!(m.url, "https://open.spotify.com/track/abc");
         assert_eq!((m.album_artist.as_str(), m.track), ("A", Some(4)));
         assert_eq!(m.cover_urls, vec!["https://i.scdn.co/image/x".to_string()]);
+    }
+
+    #[test]
+    fn place_on_the_server() {
+        let meta = Metadata {
+            title: "Song / Part 2".into(),
+            artist: "Artist".into(),
+            ..Metadata::default()
+        };
+        assert_eq!(
+            server_place(Source::Spotify, Path::new("/w/zotify/abc.OGG"), &meta),
+            "Spotify/Artist - Song _ Part 2.ogg"
+        );
+        assert_eq!(
+            server_place(Source::AppleMusic, Path::new("/w/x.m4a"), &meta),
+            "Apple Music/Artist - Song _ Part 2.m4a"
+        );
     }
 
     #[tokio::test]

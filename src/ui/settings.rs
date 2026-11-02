@@ -129,8 +129,8 @@ impl Sec {
             Sec::Downloads => (
                 "Downloads",
                 icon::DOWNLOAD_SIMPLE,
-                "Where downloads go, and how Spotify and Apple Music songs are found",
-                "yt-dlp ytdlp youtube mp3 opus folder lyrics embed tags download",
+                "Where downloads go, and how Spotify and Apple Music songs are saved",
+                "yt-dlp ytdlp youtube zotify spotify mp3 opus ogg vorbis folder lyrics embed tags download media server",
             ),
             Sec::Appearance => (
                 "Appearance",
@@ -1614,68 +1614,166 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             "Time-synced when available.",
             &mut cfg.downloads.lyrics,
         );
+        if cfg.server.enabled {
+            let server = &cx.feed.server;
+            let name = if server.name.is_empty() {
+                "the media server"
+            } else {
+                server.name.as_str()
+            };
+            let now = match (server.allowed, server.uploads) {
+                (_, true) => String::new(),
+                (true, false) => format!(
+                    " {name} doesn't take songs from this device yet: turn on “Let it upload here” for it \
+                     in its dashboard (Music › Devices)."
+                ),
+                (false, false) => " It isn't connected now (see Media server).".to_string(),
+            };
+            toggle(
+                ui,
+                pg,
+                "Send downloads to the media server",
+                &format!(
+                    "Songs you download go into {name}'s music, in a folder for each service, instead of on this \
+                     device. While it isn't connected, they're saved here.{now}"
+                ),
+                &mut cfg.downloads.to_server,
+            );
+        }
     });
+    if !cfg!(target_os = "ios") {
+        spotify_downloads(ui, pg, cx, cfg);
+    }
+    let (title, help) = if cfg!(target_os = "ios") {
+        (
+            "Spotify and Apple Music songs",
+            "Their audio is DRM-protected, so Utako downloads the same recording from SoundCloud, then tags \
+             it with the song's details from Spotify: album, artists, track and disc number, release date, \
+             ISRC, label, copyright and full-size cover.",
+        )
+    } else {
+        (
+            "Apple Music songs",
+            "Their audio is DRM-protected, so Utako downloads the same recording from YouTube (with yt-dlp) \
+             or SoundCloud, then tags it with the song's details from Spotify when it has the song. Spotify \
+             songs are found this way too while zotify isn't installed.",
+        )
+    };
+    group(ui, pg, Head::Title(title, help), |ui, pg| {
+        if cfg!(target_os = "ios") {
+            return;
+        }
+        toggle(
+            ui,
+            pg,
+            "Find Apple Music songs on YouTube",
+            "",
+            &mut cfg.downloads.youtube,
+        );
+        if !cfg.downloads.youtube {
+            return;
+        }
+        let state = widgets::ytdlp_status(ui, cx, &cfg.downloads.ytdlp_path);
+        let (text, color) = match &state {
+            Some(Ok(version)) => (format!("yt-dlp {version} is ready"), GREEN),
+            Some(Err(why)) => (
+                format!("yt-dlp {why}. {}", crate::tools::install_hint("yt-dlp")),
+                DANGER,
+            ),
+            None => ("Checking yt-dlp…".to_string(), pal().text_faint),
+        };
+        row_with(ui, pg, "yt-dlp program", Some((&text, color)), "", "ytdlp", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut cfg.downloads.ytdlp_path)
+                    .hint_text("yt-dlp")
+                    .desired_width(FIELD_W - 60.0),
+            );
+            if matches!(state, Some(Err(_))) && ui.small_button("Check again").clicked() {
+                let program = cfg.downloads.ytdlp_path.trim().to_string();
+                cx.actions.push(Action::Cmd(Command::CheckYtDlp(program)));
+            }
+        });
+        field(
+            ui,
+            pg,
+            "Extra yt-dlp options",
+            "If YouTube asks yt-dlp to confirm you're not a bot, --cookies-from-browser firefox (or \
+                 chrome) lets it use your browser's YouTube login. With a YouTube Music Premium login that \
+                 way, downloads get YouTube's 256 kbps AAC instead of ~160 kbps Opus.",
+            &mut cfg.downloads.ytdlp_args,
+            "--cookies-from-browser firefox",
+            false,
+        );
+        toggle(
+            ui,
+            pg,
+            "Save YouTube downloads as MP3 instead of Opus",
+            "Opus at ~160 kbps already sounds like a high-bitrate MP3; converting can't add quality, \
+                 but MP3 plays on every device and player.",
+            &mut cfg.downloads.youtube_mp3,
+        );
+    });
+}
+
+/// Spotify songs, saved straight from Spotify by zotify.
+fn spotify_downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
     group(
         ui,
         pg,
         Head::Title(
-            "Spotify and Apple Music songs",
-            "Their audio is DRM-protected, so Utako downloads the same recording from YouTube (with yt-dlp) \
-             or SoundCloud, then tags it with the song's details from Spotify: album, artists, track and disc \
-             number, release date, ISRC, label, copyright and full-size cover.",
+            "Spotify songs",
+            "Saved straight from Spotify by zotify (github.com/zotify-dev/zotify), with your Spotify login \
+             here: Spotify's own Ogg Vorbis, 320 kbps with Premium. Then tagged with the song's details from \
+             Spotify: album, artists, track and disc number, release date, ISRC, label, copyright and \
+             full-size cover. Apple Music songs Utako has matched to Spotify are saved this way too.",
         ),
         |ui, pg| {
-            if cfg!(target_os = "ios") {
-                return;
-            }
-            toggle(
+            let state = widgets::zotify_status(ui, cx, &cfg.downloads.zotify_path);
+            let (text, color) = match &state {
+                Some(Ok(())) if !cx.feed.spotify_logged_in => (
+                    "zotify is ready: log in to Spotify (Settings › Spotify) for it to use".to_string(),
+                    pal().text_dim,
+                ),
+                Some(Ok(())) => ("zotify is ready".to_string(), GREEN),
+                Some(Err(why)) => (format!("zotify {why}. {}", crate::zotify::install_hint()), DANGER),
+                None => ("Checking zotify…".to_string(), pal().text_faint),
+            };
+            row_with(
                 ui,
                 pg,
-                "Find Spotify and Apple Music songs on YouTube",
+                "zotify program",
+                Some((&text, color)),
                 "",
-                &mut cfg.downloads.youtube,
+                "zotify pipx",
+                |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut cfg.downloads.zotify_path)
+                            .hint_text("zotify")
+                            .desired_width(FIELD_W - 60.0),
+                    );
+                    if matches!(state, Some(Err(_))) && ui.small_button("Check again").clicked() {
+                        let program = cfg.downloads.zotify_path.trim().to_string();
+                        cx.actions.push(Action::Cmd(Command::CheckZotify(program)));
+                    }
+                },
             );
-            if !cfg.downloads.youtube {
-                return;
-            }
-            let state = widgets::ytdlp_status(ui, cx, &cfg.downloads.ytdlp_path);
-            let (text, color) = match &state {
-                Some(Ok(version)) => (format!("yt-dlp {version} is ready"), GREEN),
-                Some(Err(why)) => (
-                    format!("yt-dlp {why}. {}", crate::tools::install_hint("yt-dlp")),
-                    DANGER,
-                ),
-                None => ("Checking yt-dlp…".to_string(), pal().text_faint),
-            };
-            row_with(ui, pg, "yt-dlp program", Some((&text, color)), "", "ytdlp", |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut cfg.downloads.ytdlp_path)
-                        .hint_text("yt-dlp")
-                        .desired_width(FIELD_W - 60.0),
-                );
-                if matches!(state, Some(Err(_))) && ui.small_button("Check again").clicked() {
-                    let program = cfg.downloads.ytdlp_path.trim().to_string();
-                    cx.actions.push(Action::Cmd(Command::CheckYtDlp(program)));
-                }
-            });
             field(
                 ui,
                 pg,
-                "Extra yt-dlp options",
-                "If YouTube asks yt-dlp to confirm you're not a bot, --cookies-from-browser firefox (or \
-                 chrome) lets it use your browser's YouTube login. With a YouTube Music Premium login that \
-                 way, downloads get YouTube's 256 kbps AAC instead of ~160 kbps Opus.",
-                &mut cfg.downloads.ytdlp_args,
-                "--cookies-from-browser firefox",
+                "Extra zotify options",
+                "--download-real-time=True downloads a song only as fast as it plays, which zotify suggests \
+                 to keep your Spotify account out of trouble. --download-quality=high asks for 160 kbps.",
+                &mut cfg.downloads.zotify_args,
+                "--download-real-time=True",
                 false,
             );
             toggle(
                 ui,
                 pg,
-                "Save YouTube downloads as MP3 instead of Opus",
-                "Opus at ~160 kbps already sounds like a high-bitrate MP3; converting can't add quality, \
-                 but MP3 plays on every device and player.",
-                &mut cfg.downloads.youtube_mp3,
+                "Save Spotify downloads as MP3 instead of Ogg Vorbis",
+                "Ogg Vorbis is Spotify's own audio, saved as it is. MP3 is converted from it (320 kbps with \
+                 Premium): it can't add quality, but plays on every device and player.",
+                &mut cfg.downloads.spotify_mp3,
             );
         },
     );

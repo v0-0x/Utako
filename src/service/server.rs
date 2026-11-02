@@ -21,6 +21,8 @@ pub struct ServerFeed {
     pub allowed: bool,
     /// This device, as the server's dashboard shows it: "Utako on <computer> (<id>)".
     pub device: String,
+    /// The server's name, once it has let this device in.
+    pub name: String,
     /// The server takes songs from this device (its dashboard's "Let it upload here").
     pub uploads: bool,
     /// The upload under way.
@@ -57,9 +59,6 @@ const UPLOADED: &[&str] = &[
     "mp3", "flac", "ogg", "oga", "opus", "m4a", "m4b", "aac", "alac", "wav", "aif", "aiff", "ape", "wv", "wma", "dsf",
     "mka", "jpg", "jpeg", "png", "webp", "lrc", "cue",
 ];
-
-/// The pieces an upload is sent in: smaller than the server takes, so its progress moves.
-const UPLOAD_PIECE: u64 = 2 << 20;
 
 /// The songs a picker offers to upload.
 pub const SONG_EXTENSIONS: &[&str] = &[
@@ -206,7 +205,9 @@ impl Service {
         }
         self.server = state.server.filter(|_| state.allowed);
         self.set_server_status(&status, self.server.is_some());
-        self.shared.feed.write().unwrap().server.uploads = state.allowed && state.uploads;
+        let mut feed = self.shared.feed.write().unwrap();
+        feed.server.uploads = state.allowed && state.uploads;
+        feed.server.name = self.server.as_ref().map(|s| s.name.clone()).unwrap_or_default();
     }
 
     fn set_server_status(&self, status: &str, allowed: bool) {
@@ -349,6 +350,22 @@ impl Service {
         }
     }
 
+    /// The media server downloads go to: when that's on in Settings, it's connected and it lets
+    /// this device upload.
+    pub(super) fn download_server(&self) -> Option<Server> {
+        if !(self.cfg.downloads.to_server && self.cfg.server.enabled) {
+            return None;
+        }
+        let uploads = self.shared.feed.read().unwrap().server.uploads;
+        self.server.clone().filter(|_| uploads)
+    }
+
+    /// Asks the server what changed in a few seconds: it reads songs sent to it a moment after
+    /// they arrive (at once if this computer started less than 2 minutes ago).
+    pub(super) fn server_library_soon(&mut self) {
+        self.server_checked = Instant::now().checked_sub(SERVER_CHECK - Duration::from_secs(6));
+    }
+
     /// Uploads `path` (a song, or a folder: it keeps its name and what's in it) into the
     /// server's library.
     pub(super) fn upload_to_server(&mut self, path: PathBuf) {
@@ -416,9 +433,8 @@ impl Service {
                 } else {
                     self.shared.info(text);
                 }
-                // The server reads them in a moment: then its playlist has them (asked again
-                // in a few seconds; at once if this computer started less than 2 minutes ago).
-                self.server_checked = Instant::now().checked_sub(SERVER_CHECK - Duration::from_secs(6));
+                // The server reads them in a moment: then its playlist has them.
+                self.server_library_soon();
             }
             Err(_) if stopped => self
                 .shared
@@ -617,7 +633,15 @@ async fn upload(
             }));
         };
         match client
-            .upload_file(server, 0, rel, path, target.chunk.min(UPLOAD_PIECE), stop, progress)
+            .upload_file(
+                server,
+                0,
+                rel,
+                path,
+                target.chunk.min(hubc::UPLOAD_PIECE),
+                stop,
+                progress,
+            )
             .await
         {
             Ok(Uploaded::Sent) => summary.sent += 1,

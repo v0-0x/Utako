@@ -8,7 +8,7 @@ pub(super) struct DownloadRow {
     pub(super) state: DownloadState,
 }
 
-/// SoundCloud downloads: what's going on now, then everything saved earlier.
+/// Downloads: what's going on now, then everything saved earlier.
 pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
     // This session's downloads: running, waiting, failed, then the newest saved first.
     let mut rows: Vec<DownloadRow> = Vec::new();
@@ -47,6 +47,7 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
                 state: DownloadState::Done {
                     path: path.clone(),
                     from: String::new(),
+                    server: None,
                 },
             })
         })
@@ -67,10 +68,10 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             Some(rest) if !home.is_empty() => format!("~{rest}"),
             _ => dir.clone(),
         };
-        let saved_to = if st.download_custom {
-            format!("Songs are saved to {shown}")
-        } else {
-            format!("Songs are saved in {shown}, in a folder for each service")
+        let saved_to = match &st.download_server {
+            Some(server) => format!("Songs are sent to {server}, in a folder for each service"),
+            None if st.download_custom => format!("Songs are saved to {shown}"),
+            None => format!("Songs are saved in {shown}, in a folder for each service"),
         };
         ui.label(egui::RichText::new(saved_to).color(pal().text_dim));
         ui.add_space(12.0);
@@ -138,27 +139,59 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             }
             ui.add_space(18.0);
         }
-        let missing;
-        let note = match st.ytdlp.map(|program| widgets::ytdlp_status(ui, cx, program)) {
-            Some(Some(Err(_))) => {
-                missing = format!(
-                    "yt-dlp isn't installed, so Spotify and Apple Music songs are only looked for on SoundCloud. \
-                     To find them on YouTube too: {}",
-                    crate::tools::install_hint("yt-dlp")
-                );
-                missing.as_str()
-            }
-            Some(_) => {
-                "Spotify and Apple Music audio is DRM-protected, so those songs are saved from the same \
-                 recording on YouTube or SoundCloud, then tagged with all their details."
-            }
-            None => {
-                "Spotify and Apple Music audio is DRM-protected, so those songs are saved from the same \
-                 recording on SoundCloud (YouTube is off in Settings), then tagged with all their details."
-            }
+        let spotify = st
+            .zotify
+            .map(|program| spotify_note(widgets::zotify_status(ui, cx, program), cx.feed.spotify_logged_in));
+        // Where Spotify songs come from SoundCloud and YouTube too, they're named with Apple Music's.
+        let found = if spotify.as_ref().is_some_and(|(direct, _)| *direct) {
+            "Apple Music songs"
+        } else {
+            "Spotify and Apple Music songs"
         };
+        let note = match st.ytdlp.map(|program| widgets::ytdlp_status(ui, cx, program)) {
+            Some(Some(Err(_))) => format!(
+                "yt-dlp isn't installed, so {found} are only looked for on SoundCloud. To find them on YouTube \
+                 too: {}",
+                crate::tools::install_hint("yt-dlp")
+            ),
+            Some(_) => format!(
+                "{found} are saved from the same recording on YouTube or SoundCloud (their audio is \
+                 DRM-protected), then tagged with all their details."
+            ),
+            None => format!(
+                "{found} are saved from the same recording on SoundCloud (YouTube is off in Settings; their \
+                 audio is DRM-protected), then tagged with all their details."
+            ),
+        };
+        if let Some((_, spotify)) = spotify {
+            ui.label(egui::RichText::new(spotify).size(12.0).color(pal().text_faint));
+            ui.add_space(4.0);
+        }
         ui.label(egui::RichText::new(note).size(12.0).color(pal().text_faint));
     });
+}
+
+/// How Spotify songs are saved: straight from Spotify (true) or found like Apple Music's, and
+/// what to say about it.
+fn spotify_note(zotify: Option<Result<(), String>>, logged_in: bool) -> (bool, String) {
+    match zotify {
+        Some(Ok(())) if logged_in => (
+            true,
+            "Spotify songs are saved straight from Spotify with zotify.".into(),
+        ),
+        Some(Ok(())) => (
+            false,
+            "Log in to Spotify to save Spotify songs straight from Spotify: zotify uses that login.".into(),
+        ),
+        Some(Err(why)) => (
+            false,
+            format!(
+                "zotify {why}, so Spotify songs are found like Apple Music's. {}",
+                crate::zotify::install_hint()
+            ),
+        ),
+        None => (true, "Checking zotify…".into()),
+    }
 }
 
 pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: &[Track], i: usize) {
@@ -232,11 +265,15 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
             );
             Some((icon::X, "Cancel"))
         }
-        DownloadState::Done { from, .. } => {
+        DownloadState::Done { from, server, .. } => {
+            let saved = match server {
+                Some(server) => format!("On {server}"),
+                None => "Saved".to_string(),
+            };
             let label = match from.as_str() {
-                "" => "Saved".to_string(),
-                "original file" => "Saved · original file".to_string(),
-                from => format!("Saved · from {from}"),
+                "" => saved,
+                "original file" => format!("{saved} · original file"),
+                from => format!("{saved} · from {from}"),
             };
             painter.text(
                 right.right_center() - vec2(40.0, 0.0),
@@ -245,7 +282,8 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
                 theme::font(13.0),
                 pal().text_dim,
             );
-            Some((icon::FOLDER_OPEN, "Show in folder"))
+            // A song sent to the media server isn't in a folder here.
+            server.is_none().then_some((icon::FOLDER_OPEN, "Show in folder"))
         }
         DownloadState::Failed(e) => {
             let used = text_trunc(
