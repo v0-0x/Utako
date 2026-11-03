@@ -242,17 +242,13 @@ jobs:
           Get-ChildItem $dir -Recurse | Select-Object -First 40 | ForEach-Object { $_.FullName }
           Get-Process multimusic -ErrorAction SilentlyContinue | Stop-Process -Force
           # CI machines have no GPU (OpenGL 1.1 only): for this test only, Utako gets Mesa's
-          # software OpenGL next to it. Real PCs use their graphics driver.
-          $mesa = gh api repos/pal1000/mesa-dist-win/releases/latest | ConvertFrom-Json
-          $m = $mesa.assets | Where-Object { $_.name -match 'release-msvc\.7z$' } | Select-Object -First 1
-          Invoke-WebRequest $m.browser_download_url -OutFile dl\mesa.7z
-          if ($m.digest -match '^sha256:([0-9a-f]{64})$') {
-            $got = (Get-FileHash dl\mesa.7z -Algorithm SHA256).Hash.ToLower()
-            if ($got -ne $Matches[1]) { throw "checksum mismatch for $($m.name): $got" }
-          } else {
-            Write-Warning "GitHub has no checksum for $($m.name)"
-          }
+          # software OpenGL next to it. Real PCs use their graphics driver. A fixed, checked
+          # version: Mesa's newest builds aren't always whole (26.2.6 came without its OpenGL).
+          Invoke-WebRequest https://github.com/pal1000/mesa-dist-win/releases/download/26.2.5/mesa3d-26.2.5-release-msvc.7z -OutFile dl\mesa.7z
+          $got = (Get-FileHash dl\mesa.7z -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne '997123ef4ce8896204ab912d5b54f19372c487ff9835bcefafa2fca23b8953c2') { throw "checksum mismatch for Mesa: $got" }
           7z x dl\mesa.7z -odl\mesa -y | Out-Null
+          if (-not (Test-Path dl\mesa\x64\opengl32.dll)) { throw "Mesa has no opengl32.dll" }
           Copy-Item dl\mesa\x64\*.dll $dir
           Start-Process $app
           Start-Sleep -Seconds 12
