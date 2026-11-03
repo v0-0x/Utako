@@ -420,7 +420,7 @@ async fn is_fragmented_mp4(path: &Path) -> bool {
 
 /// Moves a finished download from its work folder into `dir` as "Artist - Title.ext".
 /// A file's extension from its path on the server ("mp3" when it has none).
-fn extension_of(path: &str) -> String {
+pub(crate) fn extension_of(path: &str) -> String {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     match name.rsplit_once('.') {
         Some((stem, ext))

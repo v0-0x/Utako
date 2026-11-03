@@ -409,8 +409,8 @@ fn playlist_row(ui: &mut Ui, cx: &mut Cx, p: &crate::model::Playlist, view: &Vie
         }
         ui.separator();
         if p.kind.is_editable() {
-            if ui.button(theme::ic(icon::PENCIL_SIMPLE, "Rename")).clicked() {
-                cx.actions.push(Action::Rename(p.id.clone(), p.name.clone()));
+            if p.kind != PlaylistKind::Liked && ui.button(theme::ic(icon::PENCIL_SIMPLE, "Edit details…")).clicked() {
+                cx.actions.push(Action::EditPlaylist(p.id.clone()));
                 ui.close();
             }
             if ui.button(theme::ic(icon::TRASH, "Delete")).clicked() {

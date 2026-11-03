@@ -291,7 +291,19 @@ pub(super) fn playlist(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, id: &str) {
             cx,
             st,
             &header,
-            |ui, r, cx| widgets::playlist_cover(ui, cx.art, p, r, 12),
+            |ui, r, cx| {
+                widgets::playlist_cover(ui, cx.art, p, r, 12);
+                // Your own playlist's picture: a click changes it (and its name, description).
+                if matches!(p.kind, PlaylistKind::Custom | PlaylistKind::M3u) {
+                    let resp = ui
+                        .interact(r, ui.id().with(("playlist-art", &p.id)), egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Edit details");
+                    if resp.clicked() {
+                        cx.actions.push(Action::EditPlaylist(p.id.clone()));
+                    }
+                }
+            },
             |ui, cx| {
                 playlist_actions(ui, cx, p);
                 widgets::download_button(ui, cx, &all, 22.0);
@@ -363,8 +375,8 @@ pub(super) fn playlist_actions(ui: &mut Ui, cx: &mut Cx, p: &Playlist) {
                     widgets::paste(cx, p, None, Some(copied));
                 }
             }
-            if widgets::icon_button(ui, icon::PENCIL_SIMPLE, 22.0, pal().text_dim, "Rename").clicked() {
-                cx.actions.push(Action::Rename(p.id.clone(), p.name.clone()));
+            if widgets::icon_button(ui, icon::PENCIL_SIMPLE, 22.0, pal().text_dim, "Edit details").clicked() {
+                cx.actions.push(Action::EditPlaylist(p.id.clone()));
             }
             if widgets::icon_button(ui, icon::TRASH, 22.0, pal().text_dim, "Delete").clicked() {
                 cx.actions.push(Action::Delete(p.id.clone()));

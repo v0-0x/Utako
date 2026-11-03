@@ -106,6 +106,9 @@ struct UploadAnswer {
     have: u64,
     #[serde(default)]
     done: bool,
+    /// The server is replacing the file there (one that doesn't say so can't).
+    #[serde(default)]
+    replace: bool,
 }
 
 /// What became of a file sent to the server.
@@ -500,6 +503,96 @@ impl Client {
     }
 }
 
+impl Client {
+    /// Sends `file` in place of the song `rel` in the server's library folder `folder` (its
+    /// details changed here): the server keeps the song as it was until the new copy is all
+    /// there. It starts from the beginning each time.
+    pub async fn replace_file(
+        &self,
+        server: &Server,
+        folder: usize,
+        rel: &str,
+        file: &std::path::Path,
+        mut sent: impl FnMut(u64),
+    ) -> Result<()> {
+        use tokio::io::AsyncReadExt;
+
+        let total = tokio::fs::metadata(file)
+            .await
+            .with_context(|| format!("couldn't read {}", file.display()))?
+            .len();
+        let path = query_escape(rel);
+        let ask = |offset: Option<u64>| {
+            let at = offset.map(|o| format!("&offset={o}")).unwrap_or_default();
+            format!("/api/peer/upload?folder={folder}&path={path}&total={total}&replace=1{at}")
+        };
+        let answer = |status: u16, bytes: &[u8]| -> Result<UploadAnswer> {
+            if !(200..=299).contains(&status) {
+                bail!("{}", error_text(status, bytes));
+            }
+            let a: UploadAnswer = serde_json::from_slice(bytes).context("unexpected answer from the server")?;
+            if !a.replace {
+                bail!(
+                    "{} needs a newer mediaserver to change its songs (update it from its dashboard)",
+                    server.name
+                );
+            }
+            Ok(a)
+        };
+        let (status, bytes) = self
+            .send(server, reqwest::Method::GET, &ask(None), Vec::new(), "", None)
+            .await?;
+        let mut have = answer(status, &bytes)?.have;
+        let mut f = tokio::fs::File::open(file)
+            .await
+            .with_context(|| format!("couldn't read {}", file.display()))?;
+        loop {
+            sent(have);
+            let n = UPLOAD_PIECE.min(total.saturating_sub(have));
+            let mut piece = vec![0u8; n as usize];
+            f.read_exact(&mut piece)
+                .await
+                .with_context(|| format!("couldn't read {}", file.display()))?;
+            let (status, bytes) = self
+                .send(
+                    server,
+                    reqwest::Method::POST,
+                    &ask(Some(have)),
+                    piece,
+                    "application/octet-stream",
+                    Some(Duration::from_secs(600)),
+                )
+                .await?;
+            let a = answer(status, &bytes)?;
+            if a.done {
+                sent(total);
+                return Ok(());
+            }
+            if a.have != have + n {
+                bail!("{} lost track of the song being sent; try again", server.name);
+            }
+            have = a.have;
+        }
+    }
+}
+
+/// Where the server's song `path` is: its library folder (by number, among `folders`) and its
+/// place in it, with slashes between folders.
+pub fn place_in(folders: &[String], path: &str) -> Option<(usize, String)> {
+    folders
+        .iter()
+        .enumerate()
+        .filter_map(|(i, folder)| {
+            let folder = folder.trim_end_matches(['/', '\\']);
+            let rest = path.strip_prefix(folder)?;
+            let rel = rest.strip_prefix(['/', '\\'])?;
+            (!rel.is_empty()).then(|| (i, folder.len(), rel.replace('\\', "/")))
+        })
+        // The deepest folder, should one be inside another.
+        .max_by_key(|(_, len, _)| *len)
+        .map(|(i, _, rel)| (i, rel))
+}
+
 /// A refusal's `{"error": "…"}` text, or its status.
 fn error_text(status: u16, bytes: &[u8]) -> String {
     serde_json::from_slice::<serde_json::Value>(bytes)
@@ -511,6 +604,25 @@ fn error_text(status: u16, bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn places_in_library_folders() {
+        let folders = vec![
+            "/music".to_string(),
+            "/music/more/".to_string(),
+            "/srv/Music".to_string(),
+        ];
+        assert_eq!(
+            place_in(&folders, "/music/A/B/01 x.flac"),
+            Some((0, "A/B/01 x.flac".into()))
+        );
+        assert_eq!(place_in(&folders, "/music/more/x.mp3"), Some((1, "x.mp3".into())));
+        assert_eq!(place_in(&folders, "/srv/Music/x.mp3"), Some((2, "x.mp3".into())));
+        // Not a folder's file: a folder whose name only starts the same, or elsewhere.
+        assert_eq!(place_in(&folders, "/musicals/x.mp3"), None);
+        assert_eq!(place_in(&folders, "/other/x.mp3"), None);
+        assert_eq!(place_in(&folders, "/music"), None);
+    }
 
     #[test]
     fn addresses() {
@@ -766,6 +878,41 @@ mod tests {
             }
         }
         assert!(found, "the upload is in the library");
+
+        // Its details changed here: sent back in its place, the same size (only its tags
+        // changed). A file that isn't a song of its library isn't replaced.
+        let target = client.upload_target(&server).await.unwrap();
+        let uploaded = client
+            .library(&server)
+            .await
+            .unwrap()
+            .tracks
+            .into_iter()
+            .find(|t| t.path.ends_with(&rel))
+            .unwrap();
+        let (folder, place) = place_in(&target.folders, &uploaded.path).expect("in a library folder");
+        assert_eq!(place, rel);
+        let changed = tmp.path().join("changed.mp3");
+        let new_bytes: Vec<u8> = bytes.iter().rev().copied().collect();
+        std::fs::write(&changed, &new_bytes).unwrap();
+        let mut seen = Vec::new();
+        client
+            .replace_file(&server, folder, &place, &changed, |have| seen.push(have))
+            .await
+            .unwrap();
+        assert_eq!(seen.first(), Some(&0));
+        assert_eq!(seen.last(), Some(&(new_bytes.len() as u64)));
+        let back = tmp.path().join("back.mp3");
+        client.download(&server, &uploaded.path, &back, &|_| {}).await.unwrap();
+        assert!(
+            std::fs::read(&back).unwrap() == new_bytes,
+            "the new copy took its place"
+        );
+        let refused = client
+            .replace_file(&server, folder, "Utako nothing here/none.mp3", &changed, |_| {})
+            .await
+            .unwrap_err();
+        assert!(refused.to_string().contains("isn't in the library"), "{refused}");
     }
 
     #[test]

@@ -38,6 +38,8 @@ pub struct ArtCache {
     disk: Arc<PathBuf>,
     /// Limits concurrent decodes so scrolling a huge list doesn't spike memory.
     permits: Arc<tokio::sync::Semaphore>,
+    /// The window, woken when a picture is ready (it may be sitting idle).
+    ctx: Option<egui::Context>,
 }
 
 impl ArtCache {
@@ -57,11 +59,15 @@ impl ArtCache {
             http: crate::http::client(),
             disk: Arc::new(disk),
             permits: Arc::new(tokio::sync::Semaphore::new(3)),
+            ctx: None,
         }
     }
 
     /// Uploads finished decodes. Call once per frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
+        if self.ctx.is_none() {
+            self.ctx = Some(ctx.clone());
+        }
         while let Ok(d) = self.rx.try_recv() {
             self.pending.remove(&d.key);
             if let Some(c) = d.accent {
@@ -120,6 +126,7 @@ impl ArtCache {
         let http = self.http.clone();
         let disk = self.disk.clone();
         let permits = self.permits.clone();
+        let ctx = self.ctx.clone();
         self.rt.spawn(async move {
             let _permit = permits.acquire().await;
             let bytes = load_bytes(&http, &disk, &key.0).await;
@@ -133,6 +140,9 @@ impl ArtCache {
             };
             if let Some(d) = decoded {
                 let _ = tx.send(d);
+                if let Some(ctx) = ctx {
+                    ctx.request_repaint();
+                }
             }
         });
         None

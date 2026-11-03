@@ -320,6 +320,8 @@ impl Service {
         dirs.dedup();
         // The copy of the Spotify login that 0.9.4 lent zotify.
         let _ = std::fs::remove_file(self.paths.spotify_dir().join("zotify-credentials.json"));
+        // Copies of media server songs from a tag editor that was closed without saving.
+        let _ = std::fs::remove_dir_all(self.tagging_dir());
         tokio::task::spawn_blocking(move || {
             for dir in dirs {
                 let Ok(entries) = std::fs::read_dir(&dir) else { continue };

@@ -116,9 +116,12 @@ pub enum Command {
         playlist_id: String,
         links: Vec<String>,
     },
-    RenamePlaylist {
+    /// Changes your own playlist's name, description and picture.
+    EditPlaylist {
         playlist_id: String,
         name: String,
+        description: String,
+        cover: Option<CoverChange>,
     },
     DeletePlaylist(String),
     /// Saves the album on the open page (by its page key) to the library's albums.
@@ -132,6 +135,19 @@ pub enum Command {
     /// it), and the cover is replaced or removed.
     EditTags {
         paths: Vec<PathBuf>,
+        changes: Vec<(library::tags::Field, String)>,
+        cover: Option<CoverChange>,
+    },
+    /// Reads the details of songs on the media server, from copies fetched for the tag
+    /// editor; the answer lands in `Feed::server_tags` under `request`.
+    ReadServerTags {
+        request: u64,
+        tracks: Vec<Track>,
+    },
+    /// Changes the details (and cover) of songs on the media server: each is changed in a copy
+    /// here, then sent back in its place.
+    EditServerTags {
+        tracks: Vec<Track>,
         changes: Vec<(library::tags::Field, String)>,
         cover: Option<CoverChange>,
     },
@@ -418,6 +434,8 @@ pub struct Feed {
     pub lyrics: LyricsState,
     /// Spotify's details of a song, for the tag editor's request with this number.
     pub tag_lookup: Option<(u64, Result<library::tags::Metadata, String>)>,
+    /// The details of media server songs the tag editor asked for, under its request.
+    pub server_tags: Option<(u64, Result<Vec<library::tags::Metadata>, String>)>,
     /// Covers that changed: the UI drops these images (it compares the number to the last
     /// one it handled).
     pub art_changed: (u64, Vec<String>),
@@ -562,6 +580,21 @@ enum Internal {
     UpdateDownloaded(PathBuf),
     /// sudo and pacman are done: `Err(None)` means a wrong password.
     UpdateInstalled(std::result::Result<(), Option<String>>),
+    /// A playlist's new picture, saved (or why not).
+    PlaylistCover {
+        playlist_id: String,
+        result: Result<PathBuf, String>,
+    },
+    ServerTagsRead {
+        request: u64,
+        result: Result<Vec<library::tags::Metadata>, String>,
+    },
+    /// Media server songs whose details were changed there, as they are now.
+    ServerTagsSaved {
+        saved: Vec<Track>,
+        errors: Vec<String>,
+        cover_changed: bool,
+    },
     TagsEdited {
         /// The files read again, with their new modification times.
         tracks: Vec<(Track, i64)>,
@@ -1333,20 +1366,16 @@ impl Service {
                     self.save_playlists(vec![p], &[]);
                 }
             }
-            Command::RenamePlaylist { playlist_id, name } => {
-                let updated = {
-                    let mut lib = self.shared.library.write().unwrap();
-                    lib.playlist_mut(&playlist_id).map(|p| {
-                        p.name = name;
-                        p.clone()
-                    })
-                };
-                if let Some(p) = updated {
-                    self.save_playlists(vec![p], &[]);
-                }
-            }
+            Command::EditPlaylist {
+                playlist_id,
+                name,
+                description,
+                cover,
+            } => self.edit_playlist(playlist_id, name, description, cover),
             Command::Notify(text) => self.shared.info(text),
             Command::EditTags { paths, changes, cover } => self.edit_tags(paths, changes, cover),
+            Command::ReadServerTags { request, tracks } => self.read_server_tags(request, tracks),
+            Command::EditServerTags { tracks, changes, cover } => self.edit_server_tags(tracks, changes, cover),
             Command::LookUpTags { request, track } => self.look_up_tags(request, track),
             Command::DeletePlaylist(id) => {
                 if id != LIKED_ID {
@@ -1549,6 +1578,82 @@ impl Service {
     }
 
     // ---------------------------------------------------------------- tag editor
+
+    /// Your own playlist's new name and description, and its picture (kept in
+    /// `<data>/playlist-art/`, so the file chosen may move or go).
+    fn edit_playlist(&mut self, id: String, name: String, description: String, cover: Option<CoverChange>) {
+        let editable = self
+            .shared
+            .library
+            .read()
+            .unwrap()
+            .playlist(&id)
+            .is_some_and(|p| matches!(p.kind, PlaylistKind::Custom | PlaylistKind::M3u));
+        if !editable {
+            return;
+        }
+        self.set_playlist(&id, |p| {
+            p.name = name;
+            p.description = description;
+        });
+        match cover {
+            None => {}
+            Some(CoverChange::Remove) => self.set_playlist(&id, |p| p.art = None),
+            Some(CoverChange::From(src)) => {
+                let (http, tx) = (self.http.clone(), self.internal_tx.clone());
+                let dir = self.paths.data_dir.join("playlist-art");
+                tokio::spawn(async move {
+                    let result = async {
+                        let bytes = load_cover(&http, &src).await?;
+                        use anyhow::Context as _;
+                        use md5::Digest as _;
+                        let format = image::guess_format(&bytes).context("that isn't a picture")?;
+                        image::load_from_memory(&bytes).context("that picture can't be read")?;
+                        let ext = match format {
+                            image::ImageFormat::Png => "png",
+                            image::ImageFormat::WebP => "webp",
+                            _ => "jpg",
+                        };
+                        tokio::fs::create_dir_all(&dir).await?;
+                        let key: String = md5::Md5::digest(id.as_bytes())
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect();
+                        let file = dir.join(format!("{key}-{}.{ext}", now_unix()));
+                        tokio::fs::write(&file, &bytes).await?;
+                        anyhow::Ok(file)
+                    }
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                    let _ = tx.send(Internal::PlaylistCover {
+                        playlist_id: id,
+                        result,
+                    });
+                });
+            }
+        }
+    }
+
+    /// Changes playlist `id` and saves it. A picture of its own that it no longer uses is
+    /// removed.
+    fn set_playlist(&mut self, id: &str, change: impl FnOnce(&mut Playlist)) {
+        let updated = {
+            let mut lib = self.shared.library.write().unwrap();
+            lib.playlist_mut(id).map(|p| {
+                let before = p.art.clone();
+                change(p);
+                (p.clone(), before)
+            })
+        };
+        let Some((p, before)) = updated else { return };
+        let own = self.paths.data_dir.join("playlist-art");
+        if let Some(old) = before.filter(|b| Some(b) != p.art.as_ref()) {
+            if Path::new(&old).starts_with(&own) {
+                let _ = std::fs::remove_file(&old);
+            }
+        }
+        self.save_playlists(vec![p], &[]);
+    }
 
     fn edit_tags(
         &mut self,
@@ -2033,6 +2138,19 @@ impl Service {
             Internal::ServerState(state) => self.server_state(*state),
             Internal::ServerSettings(result) => self.server_settings(result),
             Internal::ServerArt(keys) => self.server_art(keys),
+            Internal::PlaylistCover { playlist_id, result } => match result {
+                Ok(file) => self.set_playlist(&playlist_id, |p| p.art = Some(file.to_string_lossy().into_owned())),
+                Err(e) => self.shared.error(format!("Couldn't use that picture: {e}")),
+            },
+            Internal::ServerTagsRead { request, result } => {
+                self.shared.feed.write().unwrap().server_tags = Some((request, result));
+                self.shared.repaint();
+            }
+            Internal::ServerTagsSaved {
+                saved,
+                errors,
+                cover_changed,
+            } => self.server_tags_saved(saved, errors, cover_changed),
             Internal::ServerUpload(feed) => self.server_upload_progress(feed),
             Internal::ServerUploadDone(result) => self.server_upload_done(result),
             Internal::SoundCloudClientId(id) => {
@@ -2271,7 +2389,7 @@ fn songs_text(n: usize) -> String {
 }
 
 /// Cover data for a file's tags from an image file or link.
-async fn load_cover(http: &reqwest::Client, src: &str) -> Result<Vec<u8>> {
+pub(super) async fn load_cover(http: &reqwest::Client, src: &str) -> Result<Vec<u8>> {
     let src = src.trim();
     let bytes = if src.starts_with("http://") || src.starts_with("https://") {
         crate::http::get_image(http, src).await?

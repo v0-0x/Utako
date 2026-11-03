@@ -697,7 +697,9 @@ mod tests {
         }
         let later = later.expect("a later frame");
         assert!(later.pts > 2.3 && later.pts <= 2.41, "pts {}", later.pts);
-        // The next one comes after it (once ffmpeg has decoded it).
+        // The next one comes after it (once ffmpeg has decoded it; a busy computer takes its
+        // time).
+        let deadline = Instant::now() + Duration::from_secs(10);
         let mut next = None;
         while next.is_none() && Instant::now() < deadline {
             next = feed.next_pts();

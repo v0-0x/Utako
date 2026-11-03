@@ -1,4 +1,5 @@
-//! The tag editor: changes the details (and cover) of local files, one song or several at once.
+//! The tag editor: changes the details (and cover) of local files, or of songs on the media
+//! server, one song or several at once.
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -38,15 +39,41 @@ pub struct TagEditor {
     note: Option<String>,
     /// Closing was asked for with edits not saved: asks whether to drop them.
     confirm_close: bool,
+    /// The songs are on the media server (its name): read and changed there.
+    server: Option<String>,
+    /// The server's answer waited for (`ask` sends the question first).
+    server_read: Option<u64>,
+    ask: bool,
 }
 
 impl TagEditor {
-    /// Opens the editor for the local songs among `tracks`; `None` when there are none.
-    pub fn open(tracks: Vec<Track>, rt: &tokio::runtime::Handle) -> Option<TagEditor> {
-        let tracks: Vec<Track> = tracks.into_iter().filter(|t| t.source == Source::Local).collect();
-        if tracks.is_empty() {
-            return None;
+    /// Opens the editor for the local songs among `tracks`, or when there are none, the songs
+    /// on the media server `server` (its name; `None`: it can't be changed now). `None` when
+    /// there's nothing to edit.
+    pub fn open(tracks: Vec<Track>, server: Option<String>, rt: &tokio::runtime::Handle) -> Option<TagEditor> {
+        let (local, on_server): (Vec<Track>, Vec<Track>) = tracks
+            .into_iter()
+            .filter(|t| matches!(t.source, Source::Local | Source::Server))
+            .partition(|t| t.source == Source::Local);
+        if local.is_empty() {
+            let server = server.filter(|_| !on_server.is_empty())?;
+            return Some(TagEditor {
+                tracks: on_server,
+                original: Default::default(),
+                values: Default::default(),
+                reading: None,
+                error: None,
+                cover: Cover::Keep,
+                cover_text: String::new(),
+                lookup: None,
+                note: None,
+                confirm_close: false,
+                server: Some(server),
+                server_read: Some(rand::random::<u64>()),
+                ask: true,
+            });
         }
+        let tracks = local;
         let paths: Vec<PathBuf> = tracks.iter().map(|t| PathBuf::from(&t.uri)).collect();
         let (tx, rx) = mpsc::channel();
         rt.spawn_blocking(move || {
@@ -67,6 +94,9 @@ impl TagEditor {
             lookup: None,
             note: None,
             confirm_close: false,
+            server: None,
+            server_read: None,
+            ask: false,
         })
     }
 
@@ -146,6 +176,21 @@ impl TagEditor {
                 Err(mpsc::TryRecvError::Disconnected) => self.reading = None,
             }
         }
+        if let Some(request) = self.server_read {
+            if std::mem::take(&mut self.ask) {
+                out.push(Command::ReadServerTags {
+                    request,
+                    tracks: self.tracks.clone(),
+                });
+            }
+            match &feed.server_tags {
+                Some((got, read)) if *got == request => {
+                    self.server_read = None;
+                    self.take_read(read.clone());
+                }
+                _ => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+            }
+        }
         if let (Some(want), Some((got, result))) = (self.lookup, &feed.tag_lookup) {
             if want == *got {
                 self.lookup = None;
@@ -179,11 +224,17 @@ impl TagEditor {
                 "Edit song details".to_string()
             };
             ui.label(RichText::new(title).font(theme::bold_font(18.0)));
-            let sub = if self.several() {
-                "Changes go to every song. Fields marked “Several values” stay as they are unless you type in them."
-                    .to_string()
-            } else {
-                self.tracks[0].uri.clone()
+            let sub = match (&self.server, self.several()) {
+                (Some(server), true) => format!(
+                    "On {server}: changes go to every song there. Fields marked “Several values” stay as they \
+                     are unless you type in them."
+                ),
+                (None, true) => {
+                    "Changes go to every song. Fields marked “Several values” stay as they are unless you type in them."
+                        .to_string()
+                }
+                (Some(server), false) => format!("On {server}: {}", self.tracks[0].uri),
+                (None, false) => self.tracks[0].uri.clone(),
             };
             ui.label(RichText::new(sub).small().color(pal().text_faint));
             ui.add_space(10.0);
@@ -195,11 +246,17 @@ impl TagEditor {
                 }
                 return;
             }
-            if self.reading.is_some() {
+            if self.reading.is_some() || self.server_read.is_some() {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Reading the tags…");
+                    match &self.server {
+                        Some(server) => ui.label(format!("Reading the tags on {server}…")),
+                        None => ui.label("Reading the tags…"),
+                    };
                 });
+                if widgets::pill(ui, "Cancel", pal().card, TEXT).clicked() {
+                    open = false;
+                }
                 return;
             }
 
@@ -264,7 +321,13 @@ impl TagEditor {
                         Cover::Remove => Some(CoverChange::Remove),
                         Cover::From(src) => Some(CoverChange::From(src.clone())),
                     };
-                    if !changes.is_empty() || cover.is_some() {
+                    if (!changes.is_empty() || cover.is_some()) && self.server.is_some() {
+                        out.push(Command::EditServerTags {
+                            tracks: self.tracks.clone(),
+                            changes,
+                            cover,
+                        });
+                    } else if !changes.is_empty() || cover.is_some() {
                         out.push(Command::EditTags {
                             paths: self.tracks.iter().map(|t| PathBuf::from(&t.uri)).collect(),
                             changes,
@@ -492,11 +555,34 @@ mod tests {
             lookup: None,
             note: None,
             confirm_close: false,
+            server: None,
+            server_read: None,
+            ask: false,
         }
     }
 
     fn at(f: Field) -> usize {
         Field::ALL.iter().position(|x| *x == f).unwrap()
+    }
+
+    /// Songs on the media server open while it takes changes from this device; local songs
+    /// picked with them are edited instead.
+    #[test]
+    fn opens_for_server_songs() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut on_server = editor(1).tracks.remove(0);
+        on_server.source = Source::Server;
+        on_server.id = "server:abc:/music/a.mp3".into();
+        on_server.uri = "/music/a.mp3".into();
+        assert!(TagEditor::open(vec![on_server.clone()], None, rt.handle()).is_none());
+        let e = TagEditor::open(vec![on_server.clone()], Some("Pi".into()), rt.handle()).unwrap();
+        assert_eq!(e.server.as_deref(), Some("Pi"));
+        assert!(e.ask && e.server_read.is_some() && e.reading.is_none());
+        let local = editor(1).tracks.remove(0);
+        let e = TagEditor::open(vec![on_server, local], Some("Pi".into()), rt.handle()).unwrap();
+        assert!(e.server.is_none());
+        assert_eq!(e.tracks.len(), 1);
+        assert_eq!(e.tracks[0].source, Source::Local);
     }
 
     #[test]

@@ -220,11 +220,18 @@ impl Service {
 
     /// Where a server song's cover is kept: one per album folder (its songs share it).
     fn server_art_file(&self, server: &Server, t: &hubc::ServerTrack) -> (String, PathBuf) {
-        let dir = t.path.rsplit_once(['/', '\\']).map(|(d, _)| d).unwrap_or("");
-        let key = format!("{}\0{dir}\0{}", server.host.id, t.album);
+        self.server_art_at(&server.host.id, &t.path, &t.album)
+    }
+
+    fn server_art_at(&self, server_id: &str, path: &str, album: &str) -> (String, PathBuf) {
+        let dir = path.rsplit_once(['/', '\\']).map(|(d, _)| d).unwrap_or("");
+        let key = format!("{server_id}\0{dir}\0{album}");
         let name: String = Md5::digest(key.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-        let file = self.paths.art_cache().join("server").join(format!("{name}.jpg"));
-        (name, file)
+        (name.clone(), self.server_art_cached(&name))
+    }
+
+    fn server_art_cached(&self, key: &str) -> PathBuf {
+        self.paths.art_cache().join("server").join(format!("{key}.jpg"))
     }
 
     /// The server's songs (`server_library`), kept as a playlist named after it, with the
@@ -267,13 +274,29 @@ impl Service {
         if !fetch.is_empty() {
             self.fetch_server_art(server.clone(), fetch);
         }
+        let id = format!("server:{}", server.host.id);
+        // A name, description or picture given to it here stays.
+        let kept = self
+            .shared
+            .library
+            .read()
+            .unwrap()
+            .playlist(&id)
+            .map(|p| (p.name.clone(), p.description.clone(), p.art.clone()));
+        let (name, description, art) = kept.unwrap_or_else(|| {
+            (
+                format!("On {}", server.name),
+                format!("The music on {}", server.name),
+                None,
+            )
+        });
         let playlist = Playlist {
-            id: format!("server:{}", server.host.id),
-            name: format!("On {}", server.name),
+            id,
+            name,
             kind: PlaylistKind::Custom,
             remote_id: None,
-            description: format!("The music on {}", server.name),
-            art: None,
+            description,
+            art,
             track_ids: tracks.iter().map(|t| t.id.clone()).collect(),
         };
         self.save_playlists(vec![playlist], &[]);
@@ -339,15 +362,214 @@ impl Service {
         });
     }
 
-    /// Covers fetched: the songs get them.
+    /// Covers fetched: the songs get them. A cover fetched again (it changed on the server)
+    /// replaces the one the window may still show.
     pub(super) fn server_art(&mut self, got: Vec<String>) {
         if got.is_empty() {
             return;
+        }
+        {
+            let files: Vec<String> = got
+                .iter()
+                .map(|key| self.server_art_cached(key).to_string_lossy().into_owned())
+                .collect();
+            let mut feed = self.shared.feed.write().unwrap();
+            feed.art_changed.0 += 1;
+            feed.art_changed.1 = files;
         }
         if let Some(server) = self.server.clone() {
             self.apply_server_library(&server);
             self.shared.repaint();
         }
+    }
+
+    // ---------------------------------------------------------------- song details
+
+    /// Where copies of the server's songs are kept while their details are edited.
+    pub(super) fn tagging_dir(&self) -> PathBuf {
+        self.paths.cache_dir.join("tagging")
+    }
+
+    /// The connected server, when `tracks` are all its songs.
+    fn server_of(&self, tracks: &[Track]) -> std::result::Result<Server, String> {
+        let server = self.server.clone().ok_or("The media server isn't connected")?;
+        let prefix = format!("server:{}:", server.host.id);
+        if tracks.iter().any(|t| !t.id.starts_with(&prefix)) {
+            return Err("The media server these songs are on isn't connected".into());
+        }
+        Ok(server)
+    }
+
+    /// Reads the details of the server's songs `tracks`, from fresh copies of them.
+    pub(super) fn read_server_tags(&mut self, request: u64, tracks: Vec<Track>) {
+        let tx = self.internal_tx.clone();
+        let server = match self.server_of(&tracks) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tx.send(Internal::ServerTagsRead {
+                    request,
+                    result: Err(e),
+                });
+                return;
+            }
+        };
+        let (client, dir) = (self.hub.clone(), self.tagging_dir());
+        tokio::spawn(async move {
+            let result = async {
+                let mut out = Vec::with_capacity(tracks.len());
+                for t in &tracks {
+                    let copy = fetch_copy(&client, &server, &dir, t, true).await?;
+                    out.push(tokio::task::spawn_blocking(move || library::tags::read(&copy)).await??);
+                }
+                anyhow::Ok(out)
+            }
+            .await
+            .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Internal::ServerTagsRead { request, result });
+        });
+    }
+
+    /// Changes the details of the server's songs `tracks`: in a copy of each (the one read for
+    /// the editor, or a new one), sent back in the song's place.
+    pub(super) fn edit_server_tags(
+        &mut self,
+        tracks: Vec<Track>,
+        changes: Vec<(library::tags::Field, String)>,
+        cover: Option<CoverChange>,
+    ) {
+        use library::tags::CoverEdit;
+        let server = match self.server_of(&tracks) {
+            Ok(s) => s,
+            Err(e) => {
+                self.shared.error(e);
+                return;
+            }
+        };
+        let (client, dir, http) = (self.hub.clone(), self.tagging_dir(), self.http.clone());
+        let (tx, shared) = (self.internal_tx.clone(), self.shared.clone());
+        shared.info(format!(
+            "Saving the details of {} on {}…",
+            songs_text(tracks.len()),
+            server.name
+        ));
+        tokio::spawn(async move {
+            let cover = match cover {
+                Some(CoverChange::Remove) => Some(CoverEdit::Remove),
+                Some(CoverChange::From(src)) => match load_cover(&http, &src).await {
+                    Ok(data) => Some(CoverEdit::Set(data)),
+                    Err(e) => {
+                        shared.error(format!("Couldn't use that cover: {e:#}"));
+                        return;
+                    }
+                },
+                None => None,
+            };
+            let cover_changed = cover.is_some();
+            let cover = std::sync::Arc::new(cover);
+            let changes = std::sync::Arc::new(changes);
+            let folders = match client.upload_target(&server).await {
+                Ok(target) => target.folders,
+                Err(e) => {
+                    shared.error(format!("Couldn't change songs on {}: {e:#}", server.name));
+                    return;
+                }
+            };
+            let mut saved = Vec::new();
+            let mut errors = Vec::new();
+            for t in tracks {
+                let done = async {
+                    let (folder, rel) = hubc::place_in(&folders, &t.uri)
+                        .ok_or_else(|| anyhow!("it isn't in one of {}'s music folders", server.name))?;
+                    let copy = fetch_copy(&client, &server, &dir, &t, false).await?;
+                    let (file, ch, cv) = (copy.clone(), changes.clone(), cover.clone());
+                    let read = tokio::task::spawn_blocking(move || {
+                        library::tags::edit(&file, &ch, cv.as_ref().as_ref())?;
+                        anyhow::Ok(library::scanner::read_track(&file, None, 0))
+                    })
+                    .await??;
+                    client
+                        .replace_file(&server, folder, &rel, &copy, |_| {})
+                        .await
+                        .with_context(|| format!("couldn't send it back to {}", server.name))?;
+                    let _ = tokio::fs::remove_file(&copy).await;
+                    anyhow::Ok(read)
+                }
+                .await;
+                match done {
+                    Ok(read) => saved.push(Track {
+                        title: read.title,
+                        artist: read.artist,
+                        album: read.album,
+                        album_artist: read.album_artist,
+                        track_no: read.track_no,
+                        disc_no: read.disc_no,
+                        art: if cover_changed { None } else { t.art.clone() },
+                        ..t
+                    }),
+                    Err(e) => errors.push(format!("“{}”: {e:#}", t.title)),
+                }
+            }
+            let _ = tx.send(Internal::ServerTagsSaved {
+                saved,
+                errors,
+                cover_changed,
+            });
+        });
+    }
+
+    /// Songs changed on the server: shown with their new details at once (the server's
+    /// library says the same a moment later), a new cover fetched again.
+    pub(super) fn server_tags_saved(&mut self, saved: Vec<Track>, errors: Vec<String>, cover_changed: bool) {
+        let name = self.server.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+        if cover_changed {
+            if let Some(server) = self.server.clone() {
+                // Its album's cover, kept under the album's old name or its new one.
+                let mut albums: Vec<(String, String)> =
+                    saved.iter().map(|t| (t.uri.clone(), t.album.clone())).collect();
+                {
+                    let lib = self.shared.library.read().unwrap();
+                    albums.extend(
+                        saved
+                            .iter()
+                            .filter_map(|t| lib.tracks.get(&t.id).map(|o| (o.uri.clone(), o.album.clone()))),
+                    );
+                }
+                for (path, album) in albums {
+                    let (key, file) = self.server_art_at(&server.host.id, &path, &album);
+                    let _ = std::fs::remove_file(file);
+                    self.server_art_asked.remove(&key);
+                }
+            }
+        }
+        if !saved.is_empty() {
+            let updated: HashMap<String, Track> = saved.iter().map(|t| (t.id.clone(), t.clone())).collect();
+            if let Err(e) = self.db.upsert_tracks(&saved, &HashMap::new()) {
+                self.shared.error(format!("Database error: {e:#}"));
+            }
+            {
+                let mut lib = self.shared.library.write().unwrap();
+                for t in saved.iter() {
+                    lib.tracks.insert(t.id.clone(), t.clone());
+                }
+                lib.reindex();
+            }
+            self.queue.refresh(&updated);
+            if let Some(new) = self.playing.as_ref().and_then(|p| updated.get(&p.id)) {
+                self.playing = Some(new.clone());
+            }
+            self.publish_player();
+            self.publish_queue();
+            self.shared
+                .info(format!("Saved the details of {} on {name}", songs_text(saved.len())));
+        }
+        if let Some(first) = errors.first() {
+            let more = match errors.len() {
+                1 => String::new(),
+                n => format!(" (and {} more)", n - 1),
+            };
+            self.shared.error(format!("Couldn't save {first}{more}"));
+        }
+        self.server_library_soon();
     }
 
     /// The media server downloads go to: when that's on in Settings, it's connected and it lets
@@ -703,6 +925,25 @@ async fn connect(client: &HubClient, address: &str, pin: &str, want_library: boo
     }
     state.server = Some(server);
     state
+}
+
+/// A copy of the server's song `t` in `dir` (fetched again when `fresh`, or when there's none).
+async fn fetch_copy(client: &HubClient, server: &Server, dir: &Path, t: &Track, fresh: bool) -> Result<PathBuf> {
+    let name: String = Md5::digest(t.id.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let copy = dir.join(format!("{name}.{}", crate::downloader::extension_of(&t.uri)));
+    if fresh || !copy.is_file() {
+        tokio::fs::create_dir_all(dir).await?;
+        let part = dir.join(format!("{name}.part"));
+        client
+            .download(server, &t.uri, &part, &|_| {})
+            .await
+            .with_context(|| format!("couldn't fetch “{}” from {}", t.title, server.name))?;
+        tokio::fs::rename(&part, &copy).await?;
+    }
+    Ok(copy)
 }
 
 #[cfg(test)]

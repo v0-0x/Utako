@@ -1334,6 +1334,30 @@ pub fn songs(n: usize) -> String {
     }
 }
 
+/// "Edit details…" for songs on the media server: they're changed there, which it allows while
+/// it lets this device upload (else the item says what to turn on).
+fn edit_on_server(ui: &mut Ui, cx: &mut Cx, label: &str, picked: impl FnOnce() -> Vec<Track>) {
+    let server = &cx.feed.server;
+    let why = if !server.allowed {
+        Some("The media server isn't connected".to_string())
+    } else if !server.uploads {
+        Some(format!(
+            "{} doesn't take changes from this device yet: turn on “Let it upload here” for it in its \
+             dashboard (Music › Devices)",
+            server.name
+        ))
+    } else {
+        None
+    };
+    let resp = ui.add_enabled(why.is_none(), egui::Button::new(theme::ic(icon::PENCIL_SIMPLE, label)));
+    if let Some(why) = why {
+        resp.on_disabled_hover_text(why);
+    } else if resp.clicked() {
+        cx.actions.push(Action::EditTags(picked()));
+        ui.close();
+    }
+}
+
 /// A song as a line of text: its web link, or a local file's path.
 pub fn song_link(t: &Track) -> String {
     let link = match t.source {
@@ -1455,12 +1479,15 @@ fn selection_menu(
         ui.close();
     }
     let local = rows.iter().filter(|i| tracks[**i].source == Source::Local).count();
+    let on_server = rows.iter().filter(|i| tracks[**i].source == Source::Server).count();
     if local > 0 {
         let label = format!("Edit details of {}…", songs(local));
         if ui.button(theme::ic(icon::PENCIL_SIMPLE, label)).clicked() {
             cx.actions.push(Action::EditTags(picked()));
             ui.close();
         }
+    } else if on_server > 0 {
+        edit_on_server(ui, cx, &format!("Edit details of {}…", songs(on_server)), picked);
     }
     if let Some(p) = playlist.filter(|p| takes_songs(p)) {
         if ui
@@ -1656,6 +1683,9 @@ pub fn track_menu(ui: &mut Ui, cx: &mut Cx, t: &Track, in_playlist: Option<(Opti
     if t.source == Source::Local && ui.button(theme::ic(icon::PENCIL_SIMPLE, "Edit details…")).clicked() {
         cx.actions.push(Action::EditTags(vec![t.clone()]));
         ui.close();
+    }
+    if t.source == Source::Server {
+        edit_on_server(ui, cx, "Edit details…", || vec![t.clone()]);
     }
     if let Some((Some(p), idx)) = in_playlist {
         if takes_songs(p) && ui.button(theme::ic(icon::TRASH, "Remove from this playlist")).clicked() {

@@ -78,6 +78,7 @@ These are exactly as in `identity.go`:
 | `GET /api/peer/upload` | yes | `{"folders":[…],"chunk":8388608}`: where uploads go. See below. |
 | `GET /api/peer/upload?folder=&path=&total=` | yes | `{"path","have","done"}`: where that file stands. |
 | `POST /api/peer/upload?folder=&path=&offset=&total=` | yes | A piece of the file in the body; the same answer. |
+| `GET`/`POST /api/peer/upload?…&replace=1` | yes | The same, for a new copy of a song that's there (its details changed). See below. |
 
 Every request but `whoami` is refused with 403 unless it comes from the home network (private
 addresses, link-local, Tailscale's). Until the dashboard lets a device in, only `hello` answers
@@ -154,6 +155,15 @@ The same as the Aniko and KumoBox apps' uploads to a server (mediaserver's
   on from what's there, and Utako asks again where it stands.
 - The file is written as `<name>.part` and takes its name once it's whole. The server's
   library reads it a moment later, and `files` changes.
+- **Changing a song's details** (mediaserver 1.0.13 and newer): Utako
+  fetches the song (`/api/peer/local/file`), writes the new tags and cover into that copy, and
+  sends it back with `&replace=1` on the same requests, for the song's place in its folder
+  (`path` relative to the folder `GET /api/peer/upload` lists it under). A GET with
+  `replace=1` starts the copy over (`have` 0) and answers `"replace": true`; a server that
+  doesn't say so can't replace songs, and Utako says to update it. The pieces are posted from
+  0; the song stays as it was until the copy is whole, then the copy takes its place in one
+  step. Only a song in the library is replaced (else 404), and it needs the same "Let it
+  upload here" as uploads.
 - A folder keeps its name: `Album/01 Song.flac`. Utako sends its songs, covers, lyrics
   (`.lrc`) and cue sheets, and leaves hidden files behind.
 - Downloads go the same way when *Send downloads to the media server* is on (Settings ›

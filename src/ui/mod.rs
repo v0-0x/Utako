@@ -4,6 +4,7 @@ mod art;
 mod holiday;
 mod panels;
 mod picker;
+mod playlist_editor;
 mod profile;
 mod settings;
 mod tag_editor;
@@ -68,7 +69,8 @@ pub enum Action {
     /// Search everywhere for this text.
     Search(String),
     NewPlaylist(Vec<Track>),
-    Rename(String, String),
+    /// Opens a playlist's details (name, description, picture).
+    EditPlaylist(String),
     Delete(String),
     OpenUrl(String),
     RightTab(RightTab),
@@ -122,10 +124,6 @@ enum Dialog {
     NewPlaylist {
         name: String,
         tracks: Vec<Track>,
-    },
-    Rename {
-        id: String,
-        name: String,
     },
     /// Delete a playlist, or remove a saved album (`album`: where it's from).
     Delete {
@@ -218,6 +216,7 @@ pub struct App {
     view_changed_at: Instant,
     dialog: Option<Dialog>,
     tag_editor: Option<tag_editor::TagEditor>,
+    playlist_editor: Option<playlist_editor::PlaylistEditor>,
     /// Closing to start again with imported settings.
     restarting: bool,
     /// A new version the user put off for now.
@@ -305,6 +304,7 @@ impl App {
             view_changed_at: Instant::now() - Duration::from_secs(1),
             dialog: None,
             tag_editor: None,
+            playlist_editor: None,
             restarting: false,
             update_dismissed: String::new(),
             password_asked: 0,
@@ -444,7 +444,10 @@ impl App {
                         tracks,
                     })
                 }
-                Action::Rename(id, name) => self.dialog = Some(Dialog::Rename { id, name }),
+                Action::EditPlaylist(id) => {
+                    let playlist = self.shared.library.read().unwrap().playlist(&id).cloned();
+                    self.playlist_editor = playlist.map(playlist_editor::PlaylistEditor::open);
+                }
                 Action::Delete(id) => {
                     let (name, album) = self
                         .shared
@@ -486,7 +489,12 @@ impl App {
                     self.dialog = Some(Dialog::ImportSettings { path });
                 }
                 Action::EditTags(tracks) => {
-                    self.tag_editor = tag_editor::TagEditor::open(tracks, &self.rt);
+                    // Songs on the media server can be changed while it lets this device upload.
+                    let server = {
+                        let feed = self.shared.feed.read().unwrap();
+                        (feed.server.allowed && feed.server.uploads).then(|| feed.server.name.clone())
+                    };
+                    self.tag_editor = tag_editor::TagEditor::open(tracks, server, &self.rt);
                 }
                 Action::ToggleLibrary => {
                     self.cfg.ui.collapse_library = !self.cfg.ui.collapse_library;
@@ -862,27 +870,6 @@ impl App {
                         }
                     });
                 }
-                Dialog::Rename { id, name } => {
-                    ui.label(egui::RichText::new("Rename playlist").font(theme::bold_font(18.0)));
-                    ui.add_space(8.0);
-                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
-                    r.request_focus();
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        let enter = enter_pressed;
-                        if (widgets::pill(ui, "Save", self.accent, theme::on_color(self.accent)).clicked() || enter)
-                            && !name.trim().is_empty()
-                        {
-                            submit = Some(Command::RenamePlaylist {
-                                playlist_id: id.clone(),
-                                name: name.trim().to_string(),
-                            });
-                        }
-                        if widgets::pill(ui, "Cancel", theme::pal().card, theme::TEXT).clicked() {
-                            close = true;
-                        }
-                    });
-                }
                 Dialog::ImportSettings { path } => {
                     ui.label(egui::RichText::new("Import settings?").font(theme::bold_font(18.0)));
                     ui.add_space(6.0);
@@ -1045,15 +1032,20 @@ impl App {
                 self.art.forget(src);
             }
         }
-        let Some(editor) = self.tag_editor.as_mut() else { return };
         let mut commands = Vec::new();
-        let open = editor.show(ctx, &mut self.art, &feed, self.accent, &mut commands);
+        if let Some(editor) = self.playlist_editor.as_mut() {
+            if !editor.show(ctx, &mut self.art, self.accent, &mut commands) {
+                self.playlist_editor = None;
+            }
+        }
+        if let Some(editor) = self.tag_editor.as_mut() {
+            if !editor.show(ctx, &mut self.art, &feed, self.accent, &mut commands) {
+                self.tag_editor = None;
+            }
+        }
         drop(feed);
         for c in commands {
             self.send(c);
-        }
-        if !open {
-            self.tag_editor = None;
         }
     }
 
