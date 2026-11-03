@@ -8,7 +8,11 @@
 # by hand with channel "stable". Running it as stable for a version already out as a beta turns
 # that beta into the stable release: the same files, now offered to everyone. Running it by hand
 # with channel "demote" does the reverse: a stable release goes back to being a beta, and the
-# stable release before it is the one offered to everyone again.
+# stable release before it is the one offered to everyone again. Channel "notes" writes this
+# version's "What's new" again from its release commit.
+#
+# "What's new" comes from the release commit: the newest one whose title starts with
+# "Version ", so a fix pushed after it (to the workflow, say) doesn't replace its notes.
 name: Release
 
 on:
@@ -26,9 +30,9 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "beta, stable (also turns this version's beta into the stable release), or demote (turns this version back into a beta)"
+        description: "beta, stable (also turns this version's beta into the stable release), demote (turns this version back into a beta), or notes (writes its What's new again)"
         type: choice
-        options: [beta, stable, demote]
+        options: [beta, stable, demote, notes]
         default: beta
 
 # Read-only by default; only the job that publishes the release can write.
@@ -58,6 +62,22 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # Enough history to find the release commit (its notes).
+          fetch-depth: 50
+      - name: What's new
+        run: |
+          set -euo pipefail
+          # The release commit's message without its title and trailers; lines that aren't list
+          # items become headings.
+          SHA=$(git log -50 --format='%H %s' | awk '$2 == "Version" { print $1; exit }')
+          git log -1 --format=%B "${SHA:-$GITHUB_SHA}" | tail -n +3 \
+            | sed -e '/^Co-Authored-By:/d' -e '/^Claude-Session:/d' \
+            | sed -e 's/</\&lt;/g' \
+            | awk 'NF && !/^[-[:space:]]/ { print "### " $0; next } { print }' > changes.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: changes
+          path: changes.md
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,6 +104,16 @@ jobs:
               gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest \
                 --title "Utako $VERSION" --notes-file notes.md
               echo "::notice::v$VERSION was a beta and is now the stable release"
+            elif [ "$CHANNEL" = notes ]; then
+              # Its "What's new" again, from the release commit; the rest stays.
+              gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body > old.md
+              awk -v changes=changes.md '
+                /^## What.s new/ { print; print ""; while ((getline line < changes) > 0) print line; print ""; skip = 1; next }
+                /^## Install/ { skip = 0 }
+                !skip { print }' old.md > notes.md
+              grep -q "^## What.s new" old.md || { echo "::error::v$VERSION has no What's new to replace"; exit 1; }
+              gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+              echo "::notice::v$VERSION's What's new written again"
             elif [ "$IS_BETA" = false ] && [ "$CHANNEL" = demote ]; then
               # Back to a beta. Copies that already updated keep it; the others are offered
               # the stable release before it again.
@@ -101,6 +131,10 @@ jobs:
             else
               echo "::notice::v$VERSION is already published; bump the version to release again"
             fi
+          elif [ "$CHANNEL" = notes ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::error::v$VERSION isn't published yet: there are no notes to write again"
+            exit 1
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
@@ -487,12 +521,8 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          # What's new: the release commit's message without its title and trailers; lines that
-          # aren't list items become headings.
-          git log -1 --format=%B "$GITHUB_SHA" | tail -n +3 \
-            | sed -e '/^Co-Authored-By:/d' -e '/^Claude-Session:/d' \
-            | sed -e 's/</\&lt;/g' \
-            | awk 'NF && !/^[-[:space:]]/ { print "### " $0; next } { print }' > changes.md
+          # What's new: the release commit's, from the version job.
+          mv dist/changes.md changes.md
           cd dist
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
