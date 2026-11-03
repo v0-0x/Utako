@@ -69,7 +69,8 @@ jobs:
           set -euo pipefail
           # The release commit's message without its title and trailers; lines that aren't list
           # items become headings.
-          SHA=$(git log -50 --format='%H %s' | awk '$2 == "Version" { print $1; exit }')
+          # (awk reads to the end: stopping early would cut git off, and pipefail fail the step).
+          SHA=$(git log -50 --format='%H %s' | awk '$2 == "Version" && !found { print $1; found = 1 }')
           git log -1 --format=%B "${SHA:-$GITHUB_SHA}" | tail -n +3 \
             | sed -e '/^Co-Authored-By:/d' -e '/^Claude-Session:/d' \
             | sed -e 's/</\&lt;/g' \
