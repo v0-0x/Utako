@@ -510,13 +510,14 @@ impl Service {
                     .set_kv(&format!("spotify_snapshot:{}", meta.id), &meta.snapshot_id);
             }
         }
-        // What couldn't be loaded this time stays as it was.
-        if sync.liked.is_none() {
+        // What couldn't be loaded this time stays as it was (the log says which).
+        let asked = std::mem::take(&mut self.spotify_sync_asked);
+        if asked && sync.liked.is_none() {
             self.shared
                 .error("Spotify Liked Songs couldn't be loaded this time; they stay as they were");
         }
         let kept = sync.kept.len();
-        if kept > 0 {
+        if asked && kept > 0 {
             self.shared.error(format!(
                 "{kept} Spotify playlist{} couldn't be loaded this time and stay as they were",
                 if kept == 1 { "" } else { "s" }
@@ -529,11 +530,13 @@ impl Service {
         playlists.extend(sync.albums);
         self.merge_imported(tracks, playlists, &[PlaylistKind::Spotify, PlaylistKind::SpotifyLiked]);
         self.set_account(|f| &mut f.spotify, AccountStatus::Connected(sync.user));
-        self.shared.info(match albums {
-            0 => format!("Spotify synced: {count} playlists"),
-            1 => format!("Spotify synced: {count} playlists and 1 new album"),
-            n => format!("Spotify synced: {count} playlists and {n} new albums"),
-        });
+        if asked {
+            self.shared.info(match albums {
+                0 => format!("Spotify synced: {count} playlists"),
+                1 => format!("Spotify synced: {count} playlists and 1 new album"),
+                n => format!("Spotify synced: {count} playlists and {n} new albums"),
+            });
+        }
         let _ = self.db.set_kv("spotify_synced_at", &now_unix().to_string());
         self.connect_spotify();
     }
@@ -588,14 +591,18 @@ impl Service {
             track_ids: sync.likes.iter().map(|t| t.id.clone()).collect(),
         }];
         tracks.extend(sync.likes);
+        let asked = std::mem::take(&mut self.soundcloud_sync_asked);
         // Playlists that couldn't be loaded stay as they were (not taken for deleted).
         let prune = soundcloud_prune(&sync.playlists);
         let lists = match sync.playlists {
             Ok(lists) => lists,
             Err(e) => {
-                self.shared.error(format!(
-                    "SoundCloud playlists couldn't be loaded ({e}); they stay as they were"
-                ));
+                tracing::warn!("SoundCloud playlists stay as they were: {e}");
+                if asked {
+                    self.shared.error(format!(
+                        "SoundCloud playlists couldn't be loaded ({e}); they stay as they were"
+                    ));
+                }
                 Vec::new()
             }
         };
@@ -616,8 +623,10 @@ impl Service {
         let _ = self.db.set_kv("soundcloud_user", &sync.user);
         let _ = self.db.set_kv("soundcloud_synced_at", &now_unix().to_string());
         self.set_account(|f| &mut f.soundcloud, AccountStatus::Connected(sync.user));
-        self.shared
-            .info(format!("SoundCloud synced: likes + {count} playlists"));
+        if asked {
+            self.shared
+                .info(format!("SoundCloud synced: likes + {count} playlists"));
+        }
     }
 }
 

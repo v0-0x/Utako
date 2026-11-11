@@ -826,6 +826,10 @@ pub struct Service {
     /// A sync was requested before the session was connected.
     spotify_sync_pending: bool,
     spotify_syncing: bool,
+    /// You asked for this sync (Sync now, or a login), so it says how it went. The syncs at
+    /// startup stay quiet unless they fail outright.
+    spotify_sync_asked: bool,
+    soundcloud_sync_asked: bool,
     spotify_tx: SpotifySender,
     spotify_api: Arc<SpotifyApi>,
     /// A Spotify page waiting for the session to connect.
@@ -999,6 +1003,8 @@ impl Service {
             spotify_connecting: false,
             spotify_sync_pending: false,
             spotify_syncing: false,
+            spotify_sync_asked: false,
+            soundcloud_sync_asked: false,
             spotify_tx,
             spotify_api: Arc::new(SpotifyApi::new(http)),
             spotify_pending_page: None,
@@ -1457,9 +1463,15 @@ impl Service {
                 spotify::clear_credentials(&self.paths.spotify_dir());
                 self.set_account(|f| &mut f.spotify, AccountStatus::Off);
             }
-            Command::SyncSpotify => self.start_spotify_sync(),
+            Command::SyncSpotify => {
+                self.spotify_sync_asked = true;
+                self.start_spotify_sync();
+            }
             Command::SpotifyWebApiLogin => self.spotify_web_api_login(),
-            Command::SyncSoundCloud => self.start_soundcloud_sync(),
+            Command::SyncSoundCloud => {
+                self.soundcloud_sync_asked = true;
+                self.start_soundcloud_sync();
+            }
             Command::LastfmLogin => self.lastfm_login(),
             Command::LastfmLogout => {
                 self.cfg.lastfm.session_key.clear();
@@ -1991,6 +2003,7 @@ impl Service {
                 match r {
                     Ok(sync) => self.merge_spotify(sync),
                     Err(e) => {
+                        self.spotify_sync_asked = false;
                         self.set_account(|f| &mut f.spotify, AccountStatus::Error(format!("Sync failed: {e:#}")));
                         self.shared.error(format!("Spotify sync failed: {e:#}"));
                     }
