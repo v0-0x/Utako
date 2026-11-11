@@ -1,6 +1,6 @@
 [package]
 name = "multimusic"
-version = "0.9.9"
+version = "0.10.0"
 edition = "2021"
 description = "A fast, lightweight, native music player for local files, Spotify and SoundCloud"
 license = "MIT"
@@ -24,7 +24,6 @@ reqwest = { version = "0.13", default-features = false, features = ["native-tls"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process", "fs"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 walkdir = "2"
-plist = "1"
 directories = "6"
 md-5 = "0.10"
 regex = "1"

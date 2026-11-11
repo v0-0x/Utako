@@ -691,7 +691,9 @@ impl App {
             Some(h) => h.accent,
             None => Color32::from_rgb(self.cfg.ui.accent[0], self.cfg.ui.accent[1], self.cfg.ui.accent[2]),
         };
-        if accent != self.styled_accent || palette != theme::pal() {
+        let glass = !self.cfg.ui.classic_look;
+        if accent != self.styled_accent || palette != theme::pal() || glass != theme::glass() {
+            theme::set_glass(glass);
             theme::set_palette(palette);
             theme::apply_style(ctx, accent);
             self.styled_accent = accent;
@@ -722,6 +724,22 @@ impl App {
             anim("tint-g", target.g()),
             anim("tint-b", target.b()),
         );
+    }
+
+    /// The colour of the window's light in Glass: the cover's while a song with one plays, else
+    /// the accent's; a grey accent (the default off-white) gives a quiet, cool light.
+    fn light(&self) -> Color32 {
+        let colourful = |c: Color32| {
+            let (max, min) = (c.r().max(c.g()).max(c.b()), c.r().min(c.g()).min(c.b()));
+            max - min > 24
+        };
+        if self.tint != NEUTRAL_TINT && colourful(self.tint) {
+            theme::mix(self.tint, Color32::WHITE, 0.15)
+        } else if colourful(self.accent) {
+            self.accent
+        } else {
+            Color32::from_rgb(0x5a, 0x62, 0x78)
+        }
     }
 
     /// Saves panel widths the user dragged to. A sidebar dragged narrow snaps to the rail.
@@ -878,8 +896,8 @@ impl App {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     ui.label(format!(
-                        "Your settings are replaced with the ones in “{name}”, its playlists are added, and \
-                         Utako restarts."
+                        "“{name}” replaces your settings and adds its playlists. Utako then \
+                         restarts."
                     ));
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
@@ -905,10 +923,7 @@ impl App {
                         .unwrap_or_default();
                     ui.label(egui::RichText::new(format!("Install Utako {version}")).font(theme::bold_font(18.0)));
                     ui.add_space(6.0);
-                    ui.label(
-                        "The new version is downloaded and checked. Enter your password to install it \
-                         (with sudo pacman); Utako then starts again.",
-                    );
+                    ui.label("Enter your password to install it. Utako then restarts.");
                     ui.add_space(10.0);
                     let r = ui.add(
                         egui::TextEdit::singleline(password)
@@ -1012,7 +1027,7 @@ impl App {
             ui.set_width(380.0);
             ui.label(egui::RichText::new("Utako's player stopped").font(theme::bold_font(18.0)));
             ui.add_space(8.0);
-            ui.label("Something went wrong in the background, so playback and the buttons won't respond. Your library and playlists are safe.");
+            ui.label("Utako stopped working in the background. Your library and playlists are safe.");
             ui.add_space(12.0);
             if widgets::pill(ui, "Restart Utako", self.accent, theme::on_color(self.accent)).clicked() {
                 self.restarting = true;
@@ -1153,6 +1168,9 @@ impl eframe::App for App {
         {
             // Window background.
             ui.painter().rect_filled(ui.max_rect(), 0.0, theme::pal().window_bg);
+            if theme::glass() {
+                theme::paint_light(ui.painter(), ui.max_rect(), self.light());
+            }
             let width = ui.available_width();
             // Narrow windows get the icon sidebar and no right panel.
             let narrow = width < 820.0;
@@ -1229,8 +1247,9 @@ impl eframe::App for App {
             let page = egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
-                        .fill(theme::pal().panel)
-                        .corner_radius(egui::CornerRadius::same(theme::RADIUS))
+                        .fill(theme::panel_fill())
+                        .stroke(theme::edge())
+                        .corner_radius(egui::CornerRadius::same(theme::panel_radius()))
                         .outer_margin(egui::Margin {
                             left: panels::GAP as i8,
                             right: panels::GAP as i8,

@@ -348,7 +348,7 @@ fn periods() -> Vec<(Period, &'static str)> {
 /// Spinner or error in place of a section that has nothing to show yet.
 fn waiting(ui: &mut Ui, f: Option<&Fetch>, height: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS), pal().card);
+    theme::paint_card(ui.painter(), rect);
     match f.and_then(|f| f.error.as_deref()) {
         Some(error) => {
             ui.painter().text(
@@ -427,7 +427,7 @@ fn stat_tiles(ui: &mut Ui, tiles: &[(&str, String, &str)]) {
             ui.spacing_mut().item_spacing.x = gap;
             for (glyph, value, label) in row {
                 let (r, _) = ui.allocate_exact_size(vec2(tile_w, 88.0), Sense::hover());
-                ui.painter().rect_filled(r, CornerRadius::same(RADIUS), pal().card);
+                theme::paint_card(ui.painter(), r);
                 theme::paint_icon(
                     ui.painter(),
                     Pos2::new(r.right() - 24.0, r.top() + 24.0),
@@ -480,7 +480,7 @@ fn chart(ui: &mut Ui, accent: Color32, bars: &[Bucket], per: &str) {
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 220.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::same(RADIUS), pal().card);
+    theme::paint_card(p, rect);
     let total: u64 = bars.iter().map(|b| b.plays).sum();
     let max = bars.iter().map(|b| b.plays).max().unwrap_or(0).max(1);
     p.text(
@@ -1075,7 +1075,7 @@ fn recent_section(ui: &mut Ui, cx: &mut Cx) {
 
 /// The account at the bottom of the sidebar: picture and name (opens the profile) and a
 /// Settings button. `false` when not signed in to Last.fm (the sidebar shows Settings alone).
-pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -> bool {
+pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool, gear: bool) -> bool {
     let Some(name) = username(cx.feed).map(str::to_string) else {
         return false;
     };
@@ -1131,8 +1131,14 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
         return true;
     }
     let (rect, _) = ui.allocate_exact_size(vec2(w, 52.0), Sense::hover());
+    // Without the gear (Settings is an icon above it), the card takes the whole width.
+    let with_gear = gear;
     let gear = Rect::from_center_size(Pos2::new(rect.right() - 22.0, rect.center().y), vec2(36.0, 36.0));
-    let card = Rect::from_min_max(rect.min, Pos2::new(gear.left() - 4.0, rect.bottom()));
+    let card = if with_gear {
+        Rect::from_min_max(rect.min, Pos2::new(gear.left() - 4.0, rect.bottom()))
+    } else {
+        rect
+    };
     let resp = ui
         .interact(card, Id::new("sidebar-account"), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand);
@@ -1179,6 +1185,9 @@ pub fn sidebar_account(ui: &mut Ui, cx: &mut Cx, view: &View, collapsed: bool) -
     );
     if resp.on_hover_text("Your Last.fm stats").clicked() {
         cx.actions.push(Action::Go(View::Profile));
+    }
+    if !with_gear {
+        return true;
     }
     let resp = ui
         .interact(gear, Id::new("sidebar-settings"), Sense::click())

@@ -229,3 +229,46 @@ mod system {
         }
     }
 }
+
+/// What becomes of a picture in an editor (a song's cover, a playlist's picture).
+#[derive(Clone, PartialEq)]
+pub enum Cover {
+    Keep,
+    Remove,
+    /// An image file or link.
+    From(String),
+}
+
+impl Cover {
+    /// What to tell the service: `None` to leave the picture alone.
+    pub fn change(&self) -> Option<crate::service::CoverChange> {
+        match self {
+            Cover::Keep => None,
+            Cover::Remove => Some(crate::service::CoverChange::Remove),
+            Cover::From(src) => Some(crate::service::CoverChange::From(src.clone())),
+        }
+    }
+}
+
+const IMAGES: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
+
+/// Opens the file dialog for a picture; `take` answers under the same key.
+pub fn open_image(ctx: &egui::Context, key: &'static str, title: &'static str) {
+    open(ctx, key, title, Pick::File("Images", &IMAGES));
+}
+
+/// An image file dropped on the window this frame.
+pub fn dropped_image(ctx: &egui::Context) -> Option<String> {
+    ctx.input(|i| {
+        i.raw
+            .dropped_files
+            .iter()
+            .map(|f| f.path().to_string_lossy().into_owned())
+            .find(|p| is_image(p))
+    })
+}
+
+fn is_image(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    IMAGES.iter().any(|e| lower.ends_with(&format!(".{e}")))
+}

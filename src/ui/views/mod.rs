@@ -380,11 +380,22 @@ fn list_header(
     let art_size = if w > 700.0 { 184.0 } else { 128.0 };
     let pad = 24.0;
     let (card, _) = ui.allocate_exact_size(vec2(w, art_size + 2.0 * pad), Sense::hover());
-    ui.painter().rect_filled(
-        card,
-        CornerRadius::same(RADIUS + 4),
-        theme::mix(h.tint, pal().card, 0.8),
-    );
+    if theme::glass() {
+        // See-through, in the cover's colour, with the light edge.
+        ui.painter().rect(
+            card,
+            CornerRadius::same(RADIUS + 6),
+            theme::with_alpha(theme::mix(h.tint, Color32::WHITE, 0.25), 30),
+            theme::edge(),
+            egui::StrokeKind::Inside,
+        );
+    } else {
+        ui.painter().rect_filled(
+            card,
+            CornerRadius::same(RADIUS + 4),
+            theme::mix(h.tint, pal().card, 0.8),
+        );
+    }
     let art = Rect::from_min_size(card.min + vec2(pad, pad), vec2(art_size, art_size));
     let art_radius = if h.round { (art_size / 2.0) as u8 } else { 12 };
     // The cover glows in its own colour.

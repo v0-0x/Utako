@@ -38,6 +38,123 @@ pub fn set_palette(p: Palette) {
     *PALETTE.write().unwrap_or_else(|e| e.into_inner()) = p;
 }
 
+/// The Glass look (0.10's): the window lit in the cover's or the accent's colour, and panels,
+/// cards and menus see-through on it. Off: the classic look, flat and solid.
+static GLASS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn glass() -> bool {
+    GLASS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_glass(on: bool) {
+    GLASS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The fill of the page, the right panel: see-through in Glass, so the window's light shows.
+pub fn panel_fill() -> Color32 {
+    if glass() {
+        pal().panel.gamma_multiply(0.62)
+    } else {
+        pal().panel
+    }
+}
+
+/// The fill of a card on a panel (and of the player dock).
+pub fn card_fill() -> Color32 {
+    if glass() {
+        Color32::from_white_alpha(11)
+    } else {
+        pal().card
+    }
+}
+
+/// The thin light edge of a panel or card in Glass (nothing in the classic look).
+pub fn edge() -> Stroke {
+    if glass() {
+        Stroke::new(1.0, Color32::from_white_alpha(20))
+    } else {
+        Stroke::NONE
+    }
+}
+
+/// Paints a card: its fill, and in Glass its light edge.
+pub fn paint_card(painter: &egui::Painter, rect: egui::Rect) {
+    painter.rect(
+        rect,
+        CornerRadius::same(card_radius()),
+        card_fill(),
+        edge(),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// What hovered rows and small controls are filled with on a panel.
+pub fn hover_fill() -> Color32 {
+    if glass() {
+        Color32::from_white_alpha(16)
+    } else {
+        pal().hover
+    }
+}
+
+/// What the chosen row or tab is filled with.
+pub fn selected_fill() -> Color32 {
+    if glass() {
+        Color32::from_white_alpha(26)
+    } else {
+        pal().selected
+    }
+}
+
+/// Corner radius of the page and the panels.
+pub fn panel_radius() -> u8 {
+    if glass() {
+        18
+    } else {
+        RADIUS
+    }
+}
+
+/// Corner radius of cards.
+pub fn card_radius() -> u8 {
+    if glass() {
+        16
+    } else {
+        RADIUS
+    }
+}
+
+/// The window's light: three soft glows in `color` (top left, bottom right, and a faint one
+/// right of the middle), as Aniko's Glass has them.
+pub fn paint_light(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let glow = |at: (f32, f32), size: (f32, f32), strength: f32| {
+        let center = egui::pos2(rect.left() + rect.width() * at.0, rect.top() + rect.height() * at.1);
+        let mut mesh = egui::Mesh::default();
+        let inner = color.gamma_multiply(strength);
+        mesh.colored_vertex(center, inner);
+        const STEPS: u32 = 48;
+        // Two rings: the light falls off quickly, then fades out.
+        for (ring, alpha) in [(0.45, 0.45), (1.0, 0.0)] {
+            for i in 0..STEPS {
+                let a = i as f32 / STEPS as f32 * std::f32::consts::TAU;
+                let p = center + egui::vec2(a.cos() * size.0 * ring, a.sin() * size.1 * ring);
+                mesh.colored_vertex(p, color.gamma_multiply(strength * alpha));
+            }
+        }
+        for i in 0..STEPS {
+            let n = (i + 1) % STEPS;
+            mesh.add_triangle(0, 1 + i, 1 + n);
+            let (a, b, c, d) = (1 + i, 1 + n, 1 + STEPS + i, 1 + STEPS + n);
+            mesh.add_triangle(a, c, d);
+            mesh.add_triangle(a, d, b);
+        }
+        painter.with_clip_rect(rect).add(egui::Shape::mesh(mesh));
+    };
+    glow((0.06, -0.10), (1000.0, 700.0), 0.42);
+    glow((1.04, 1.08), (900.0, 700.0), 0.30);
+    glow((0.62, 0.38), (700.0, 520.0), 0.12);
+}
+
 pub const TEXT: Color32 = Color32::from_rgb(0xee, 0xec, 0xe7);
 pub const DANGER: Color32 = Color32::from_rgb(0xef, 0x6b, 0x6b);
 
@@ -194,10 +311,18 @@ pub fn apply_style(ctx: &egui::Context, accent: Color32) {
     v.extreme_bg_color = pal().card;
     v.faint_bg_color = mix(pal().panel, pal().card, 0.5);
     v.code_bg_color = pal().card;
-    v.window_fill = mix(pal().card, pal().hover, 0.45);
-    v.window_corner_radius = CornerRadius::same(12);
-    v.menu_corner_radius = CornerRadius::same(10);
-    v.window_stroke = Stroke::new(1.0, mix(pal().selected, TEXT, 0.03));
+    // Menus and dialogs: in Glass a little see-through, rounder, with a light edge.
+    if glass() {
+        v.window_fill = mix(pal().card, pal().hover, 0.45).gamma_multiply(0.96);
+        v.window_corner_radius = CornerRadius::same(16);
+        v.menu_corner_radius = CornerRadius::same(14);
+        v.window_stroke = Stroke::new(1.0, Color32::from_white_alpha(26));
+    } else {
+        v.window_fill = mix(pal().card, pal().hover, 0.45);
+        v.window_corner_radius = CornerRadius::same(12);
+        v.menu_corner_radius = CornerRadius::same(10);
+        v.window_stroke = Stroke::new(1.0, mix(pal().selected, TEXT, 0.03));
+    }
     v.window_shadow = Shadow {
         offset: [0, 8],
         blur: 24,
@@ -514,6 +639,15 @@ pub fn fmt_total(ms: u64) -> String {
         format!("{} h {} min", mins / 60, mins % 60)
     } else {
         format!("{mins} min")
+    }
+}
+
+/// "1 song", "2 songs".
+pub fn song_count(n: usize) -> String {
+    if n == 1 {
+        "1 song".to_string()
+    } else {
+        format!("{n} songs")
     }
 }
 

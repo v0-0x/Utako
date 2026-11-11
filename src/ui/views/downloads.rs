@@ -107,12 +107,9 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             panels::empty_state(ui, icon::DOWNLOAD_SIMPLE, "Songs you download show up here");
             ui.vertical_centered(|ui| {
                 ui.label(
-                    egui::RichText::new(
-                        "Right-click a song and choose Download, or use the download button on a playlist, \
-                         album or profile.",
-                    )
-                    .size(12.5)
-                    .color(pal().text_faint),
+                    egui::RichText::new("Right-click a song, or use a playlist's download button.")
+                        .size(12.5)
+                        .color(pal().text_faint),
                 );
             });
         }
@@ -144,8 +141,7 @@ pub(super) fn downloads(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
         let spotify = if cx.feed.spotify_logged_in {
             "Spotify songs are saved straight from Spotify: Ogg Vorbis, 320 kbps with Premium."
         } else {
-            "Log in to Spotify to save Spotify songs straight from Spotify. Until then they're saved from \
-             the same recording on SoundCloud, tagged with all their details."
+            "Without a Spotify login, Spotify songs are saved from SoundCloud."
         };
         ui.label(egui::RichText::new(spotify).size(12.0).color(pal().text_faint));
         ui.add_space(4.0);
@@ -167,7 +163,7 @@ pub(super) fn download_row(ui: &mut Ui, cx: &mut Cx, row: &DownloadRow, tracks: 
     let t = &row.track;
     let id = Id::new(("download-row", &t.id));
     let hovered = ui.rect_contains_pointer(rect) || resp.context_menu_opened();
-    widgets::fade_fill(ui, id, rect, 10, hovered, pal().hover);
+    widgets::fade_fill(ui, id, rect, 10, hovered, theme::hover_fill());
     let art = Rect::from_min_size(rect.min + vec2(8.0, (H - 40.0) / 2.0), vec2(40.0, 40.0));
     widgets::cover(ui, cx.art, t.art.as_deref(), art, 6, widgets::track_fallback(t));
 

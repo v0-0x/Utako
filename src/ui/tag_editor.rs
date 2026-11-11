@@ -8,22 +8,14 @@ use egui::{vec2, Color32, Key, Rect, RichText, Sense};
 use egui_phosphor::regular as icon;
 
 use super::art::ArtCache;
+use super::picker::Cover;
 use super::theme::{self, *};
 use super::widgets;
 use crate::library::tags::{self, Field, Metadata};
 use crate::model::{Source, Track};
-use crate::service::{Command, CoverChange, Feed};
+use crate::service::{Command, Feed};
 
 const FIELDS: usize = Field::ALL.len();
-
-/// What becomes of the cover.
-#[derive(Clone, PartialEq)]
-enum Cover {
-    Keep,
-    Remove,
-    /// An image file or link.
-    From(String),
-}
 
 pub struct TagEditor {
     tracks: Vec<Track>,
@@ -201,15 +193,8 @@ impl TagEditor {
             }
         }
         // An image dropped on the window becomes the cover.
-        let dropped = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .map(|f| f.path().to_path_buf())
-                .find(|p| is_image(&p.to_string_lossy()))
-        });
-        if let Some(path) = dropped {
-            self.cover = Cover::From(path.to_string_lossy().to_string());
+        if let Some(path) = super::picker::dropped_image(ctx) {
+            self.cover = Cover::From(path);
         }
 
         // Read before the text fields, which take Enter for themselves.
@@ -225,14 +210,10 @@ impl TagEditor {
             };
             ui.label(RichText::new(title).font(theme::bold_font(18.0)));
             let sub = match (&self.server, self.several()) {
-                (Some(server), true) => format!(
-                    "On {server}: changes go to every song there. Fields marked “Several values” stay as they \
-                     are unless you type in them."
-                ),
-                (None, true) => {
-                    "Changes go to every song. Fields marked “Several values” stay as they are unless you type in them."
-                        .to_string()
+                (Some(server), true) => {
+                    format!("On {server}. Fields marked “Several values” stay unless you type in them.")
                 }
+                (None, true) => "Fields marked “Several values” stay unless you type in them.".to_string(),
                 (Some(server), false) => format!("On {server}: {}", self.tracks[0].uri),
                 (None, false) => self.tracks[0].uri.clone(),
             };
@@ -316,11 +297,7 @@ impl TagEditor {
                     .clicked();
                 if (save || save_key) && problem.is_none() {
                     let changes = self.changes();
-                    let cover = match &self.cover {
-                        Cover::Keep => None,
-                        Cover::Remove => Some(CoverChange::Remove),
-                        Cover::From(src) => Some(CoverChange::From(src.clone())),
-                    };
+                    let cover = self.cover.change();
                     if (!changes.is_empty() || cover.is_some()) && self.server.is_some() {
                         out.push(Command::EditServerTags {
                             tracks: self.tracks.clone(),
@@ -458,12 +435,7 @@ impl TagEditor {
                     self.cover = Cover::From(text);
                 }
                 if ui.button("Browse…").clicked() {
-                    super::picker::open(
-                        ui.ctx(),
-                        "cover-file",
-                        "Cover image",
-                        super::picker::Pick::File("Images", &["jpg", "jpeg", "png", "webp"]),
-                    );
+                    super::picker::open_image(ui.ctx(), "cover-file", "Cover image");
                 }
                 match super::picker::take(ui.ctx(), "cover-file") {
                     Some(Ok(p)) => {
@@ -518,11 +490,6 @@ fn badge(ui: &egui::Ui, rect: Rect, text: &str, accent: Color32) {
     ui.painter().rect_filled(r, egui::CornerRadius::same(4), accent);
     ui.painter()
         .galley(r.min + vec2(5.0, 2.0), galley, theme::on_color(accent));
-}
-
-fn is_image(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    [".jpg", ".jpeg", ".png", ".webp"].iter().any(|e| lower.ends_with(e))
 }
 
 #[cfg(test)]

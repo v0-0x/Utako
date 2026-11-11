@@ -12,7 +12,7 @@ pub(super) fn songs(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             playing_from: widgets::plays_from(cx, "Local Files", |id| all.iter().any(|t| t.id == id)),
             title: "Local Files",
             description: "Every song in your music folders",
-            meta: format!("{} songs, {}", all.len(), theme::fmt_total(total_ms)),
+            meta: format!("{}, {}", theme::song_count(all.len()), theme::fmt_total(total_ms)),
             source: None,
             tint,
             round: false,
@@ -136,8 +136,8 @@ pub(super) fn albums(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             panels::empty_state(
                 ui,
                 icon::VINYL_RECORD,
-                "No albums yet. Albums from your music folders show up here, and so do albums you save \
-                 from Spotify or SoundCloud (search for one, open it and click Save album).",
+                "No albums yet. Albums in your music folders and ones you save from Spotify or \
+                 SoundCloud show up here.",
             );
             return;
         }
@@ -175,7 +175,7 @@ pub(super) fn artists(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
         }
         widgets::grid(ui, list.len(), 150.0, |ui, i, w| {
             let a = list[i];
-            let sub = format!("{} songs", a.track_ids.len());
+            let sub = theme::song_count(a.track_ids.len());
             let (resp, play) = widgets::tile(ui, w, &a.name, &sub, cx.accent, |ui, r| {
                 widgets::cover_round(ui, cx.art, a.art.as_deref(), r, widgets::artist_fallback())
             });
@@ -207,7 +207,12 @@ pub(super) fn album(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: &str) {
             playing_from: widgets::plays_from(cx, &a.name, |id| all.iter().any(|t| t.id == id)),
             title: &a.name,
             description: "",
-            meta: format!("{} • {} songs, {}", a.artist, all.len(), theme::fmt_total(total_ms)),
+            meta: format!(
+                "{} • {}, {}",
+                a.artist,
+                theme::song_count(all.len()),
+                theme::fmt_total(total_ms)
+            ),
             source: None,
             tint,
             round: false,
@@ -277,7 +282,7 @@ pub(super) fn playlist(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, id: &str) {
             playing_from: widgets::plays_from(cx, &p.name, |id| all.iter().any(|t| t.id == id)),
             title: &p.name,
             description: &p.description,
-            meta: format!("{} songs, {}", all.len(), theme::fmt_total(total_ms)),
+            meta: format!("{}, {}", theme::song_count(all.len()), theme::fmt_total(total_ms)),
             source: if p.kind == PlaylistKind::M3u {
                 Some(Source::Local)
             } else {
@@ -428,7 +433,11 @@ pub(super) fn library_artist(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState, key: 
             playing_from: widgets::plays_from(cx, &a.name, |id| all.iter().any(|t| t.id == id)),
             title: &a.name,
             description: "",
-            meta: format!("{} songs in your library, {}", all.len(), theme::fmt_total(total_ms)),
+            meta: format!(
+                "{} in your library, {}",
+                theme::song_count(all.len()),
+                theme::fmt_total(total_ms)
+            ),
             source: None,
             tint,
             round: true,

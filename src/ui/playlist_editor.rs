@@ -4,19 +4,11 @@
 use egui::{vec2, Color32, Key, RichText, Sense};
 
 use super::art::ArtCache;
+use super::picker::Cover;
 use super::theme::{self, *};
 use super::widgets;
 use crate::model::Playlist;
-use crate::service::{Command, CoverChange};
-
-/// What becomes of the picture.
-#[derive(Clone, PartialEq)]
-enum Cover {
-    Keep,
-    Remove,
-    /// An image file or link.
-    From(String),
-}
+use crate::service::Command;
 
 pub struct PlaylistEditor {
     playlist: Playlist,
@@ -45,11 +37,7 @@ impl PlaylistEditor {
         if name.is_empty() {
             return None;
         }
-        let cover = match &self.cover {
-            Cover::Keep => None,
-            Cover::Remove => Some(CoverChange::Remove),
-            Cover::From(src) => Some(CoverChange::From(src.clone())),
-        };
+        let cover = self.cover.change();
         let description = self.description.trim();
         let changed = name != self.playlist.name || description != self.playlist.description.trim() || cover.is_some();
         changed.then(|| Command::EditPlaylist {
@@ -63,15 +51,8 @@ impl PlaylistEditor {
     /// Draws the editor. Returns false once it is closed; what to save goes to `out`.
     pub fn show(&mut self, ctx: &egui::Context, art: &mut ArtCache, accent: Color32, out: &mut Vec<Command>) -> bool {
         // An image dropped on the window becomes the picture.
-        let dropped = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .map(|f| f.path().to_path_buf())
-                .find(|p| is_image(&p.to_string_lossy()))
-        });
-        if let Some(path) = dropped {
-            self.cover = Cover::From(path.to_string_lossy().into_owned());
+        if let Some(path) = super::picker::dropped_image(ctx) {
+            self.cover = Cover::From(path);
         }
         let save_key = ctx.input(|i| i.modifiers.command && i.key_pressed(Key::Enter));
         let mut open = true;
@@ -141,12 +122,7 @@ impl PlaylistEditor {
                 }
             }
             if resp.on_hover_text("Choose a picture").clicked() {
-                super::picker::open(
-                    ui.ctx(),
-                    "playlist-cover-file",
-                    "Playlist picture",
-                    super::picker::Pick::File("Images", &["jpg", "jpeg", "png", "webp"]),
-                );
+                super::picker::open_image(ui.ctx(), "playlist-cover-file", "Playlist picture");
             }
             if self.cover != Cover::Keep {
                 let text = if self.cover == Cover::Remove {
@@ -174,12 +150,7 @@ impl PlaylistEditor {
                     self.cover = Cover::From(text);
                 }
                 if ui.button("Browse…").clicked() {
-                    super::picker::open(
-                        ui.ctx(),
-                        "playlist-cover-file",
-                        "Playlist picture",
-                        super::picker::Pick::File("Images", &["jpg", "jpeg", "png", "webp"]),
-                    );
+                    super::picker::open_image(ui.ctx(), "playlist-cover-file", "Playlist picture");
                 }
                 if (self.playlist.art.is_some() || matches!(self.cover, Cover::From(_)))
                     && ui.button("Remove").clicked()
@@ -201,15 +172,11 @@ impl PlaylistEditor {
     }
 }
 
-fn is_image(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    [".jpg", ".jpeg", ".png", ".webp"].iter().any(|e| lower.ends_with(e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::PlaylistKind;
+    use crate::service::CoverChange;
 
     fn playlist() -> Playlist {
         Playlist {

@@ -216,7 +216,8 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, options: &[(T, &str)], select
         .collect();
     let total: f32 = widths.iter().sum::<f32>() + 6.0;
     let (rect, _) = ui.allocate_exact_size(vec2(total, 34.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), pal().card);
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(10), theme::card_fill());
     let mut x = rect.left() + 3.0;
     let mut clicked = None;
     for ((value, label), w) in options.iter().zip(widths) {
@@ -226,9 +227,10 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, options: &[(T, &str)], select
             .on_hover_cursor(CursorIcon::PointingHand);
         let active = *value == selected;
         if active {
-            ui.painter().rect_filled(seg, CornerRadius::same(8), pal().selected);
+            ui.painter()
+                .rect_filled(seg, CornerRadius::same(8), theme::selected_fill());
         } else {
-            fade_fill(ui, resp.id, seg, 8, resp.hovered(), pal().hover);
+            fade_fill(ui, resp.id, seg, 8, resp.hovered(), theme::hover_fill());
         }
         ui.painter().text(
             seg.center(),
@@ -762,13 +764,14 @@ pub fn track_table(ui: &mut Ui, cx: &mut Cx, tracks: &[&Track], opts: &TableOpts
         let is_current = current_id == Some(t.id.as_str());
         let hovered = ui.rect_contains_pointer(row) || resp.context_menu_opened();
         if selected[i - first] {
-            ui.painter().rect_filled(row, CornerRadius::same(10), pal().selected);
+            ui.painter()
+                .rect_filled(row, CornerRadius::same(10), theme::selected_fill());
         } else {
             if is_current {
                 ui.painter()
                     .rect_filled(row, CornerRadius::same(10), theme::with_alpha(cx.accent, 14));
             }
-            fade_fill(ui, resp.id, row, 10, hovered, pal().hover);
+            fade_fill(ui, resp.id, row, 10, hovered, theme::hover_fill());
         }
 
         // Number / play icon / equalizer.
@@ -1823,8 +1826,9 @@ pub fn source_badge(ui: &mut Ui, source: Source) {
 
 pub fn card_frame() -> egui::Frame {
     egui::Frame::new()
-        .fill(pal().card)
-        .corner_radius(CornerRadius::same(RADIUS))
+        .fill(theme::card_fill())
+        .stroke(theme::edge())
+        .corner_radius(CornerRadius::same(theme::card_radius()))
         .inner_margin(egui::Margin::same(16))
 }
 

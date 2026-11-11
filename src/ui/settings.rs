@@ -943,8 +943,7 @@ fn library(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
             note(
                 ui,
                 pg,
-                "Copy music into Utako's folder in the Files app (On My iPhone › Utako), from a computer \
-                 with Finder or iTunes, or from iCloud Drive, then Rescan now.",
+                "Copy music into Files › On My iPhone › Utako, then Rescan now.",
                 "folder library files",
             );
         }
@@ -1010,7 +1009,7 @@ fn library(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
             ui,
             pg,
             "Import an .m3u playlist",
-            "Its songs that are in your folders become a playlist of your own. Or drop the file onto the window.",
+            "Its songs become a playlist. Or drop the file onto the window.",
             "import playlist m3u m3u8",
             |ui| {
                 ui.horizontal(|ui| {
@@ -1041,8 +1040,7 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
             pg,
             "Spotify account",
             Some((&text, color)),
-            "Opens Spotify's login page in your browser. Playback needs Spotify Premium; free accounts can \
-             still import playlists.",
+            "Playback needs Premium. A free account can still import playlists.",
             "login log in log out sync playlists",
             |ui| {
                 if working {
@@ -1080,8 +1078,8 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
                         }
                         ui.add_enabled(false, egui::Button::selectable(false, "Lossless (FLAC)"))
                             .on_disabled_hover_text(
-                                "Spotify only sends its lossless FLAC streams to the official Spotify apps. \
-                             Third-party players (librespot) get 320 kbps Ogg Vorbis at most.",
+                                "320 kbps Ogg Vorbis is the most Spotify gives players other than \
+                                 its own.",
                             );
                     });
             },
@@ -1106,9 +1104,8 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
                 ui,
                 pg,
                 "Audio output",
-                "Automatic uses PipeWire/PulseAudio when it's running (it follows your system's output \
-                 device). A change takes effect the next time Spotify playback starts (or after restarting \
-                 Utako).",
+                "Automatic follows your system's output. Changes apply when Spotify next starts \
+                 playing.",
                 "pulseaudio pipewire alsa",
                 |ui| {
                     let label = |v: &str| match v {
@@ -1133,10 +1130,9 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
             ui,
             pg,
             "Your own Spotify app (recommended for search)",
-            "Your playlists import through Utako's direct Spotify connection. Search and artist / album \
-             pages use Spotify's Web API, whose shared key is often rate limited (HTTP 429). Fix it with a free \
-             app: developer.spotify.com → Dashboard → Create app → tick \"Web API\". Then copy its Client ID \
-             and Client secret (app → Settings → View client secret) here.",
+            "Search and artist pages use Spotify's Web API, whose shared key is often rate \
+             limited. Your own free app fixes that: developer.spotify.com → Dashboard → Create \
+             app → tick \"Web API\", then paste its Client ID and Client secret here.",
             "web api rate limit 429 developer",
             |_| {},
         );
@@ -1153,8 +1149,7 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
             ui,
             pg,
             "Client secret",
-            "With the secret, Utako uses your app straight away: no browser login and no Redirect URI. \
-             Likes still sync through your normal Spotify login.",
+            "With the secret there's no browser login and no Redirect URI.",
             &mut cfg.spotify.web_api_client_secret,
             "Settings → View client secret",
             true,
@@ -1165,10 +1160,8 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
             ui,
             pg,
             "Or log in to your app in the browser",
-            "If Spotify says \"redirect_uri: Not matching configuration\", your app doesn't have the \
-             Redirect URI above saved: on developer.spotify.com open the app → Settings → Edit, add it \
-             under Redirect URIs exactly as shown, click Add, then scroll down and click Save (it only \
-             counts after Save). Or skip all this and use the Client secret above.",
+            "\"redirect_uri: Not matching configuration\": add the Redirect URI above to your app \
+             (Settings → Edit → Redirect URIs → Add → Save). Or use the Client secret instead.",
             "redirect uri authorize",
             |ui| {
                 ui.label(RichText::new("Redirect URI (must match your app's exactly)").color(pal().text_dim));
@@ -1192,12 +1185,9 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
                     }
                 };
                 ui.label(
-                    RichText::new(format!(
-                        "Leave it empty to use {default_uri}, or paste the Redirect URI your app already lists. \
-                         Use http:// with 127.0.0.1 (Spotify only wants https for internet addresses)."
-                    ))
-                    .size(12.5)
-                    .color(pal().text_dim),
+                    RichText::new(format!("Empty: {default_uri}. Use http:// with 127.0.0.1."))
+                        .size(12.5)
+                        .color(pal().text_dim),
                 );
                 let ready = !cfg.spotify.web_api_client_id.trim().is_empty() && redirect_ok;
                 if ui
@@ -1210,8 +1200,8 @@ fn spotify(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut S
         );
         let wrong_id = cfg.spotify.client_id.trim() != SPOTIFY_DEFAULT_CLIENT_ID;
         let warning = wrong_id.then_some((
-            "Playback and library import only work with Spotify's own ID here. Put your own app's Client ID \
-             in the Client ID field above instead, then click Reset.",
+            "Playback only works with Spotify's own ID here. Put your app's ID in the Client ID \
+             field above, then click Reset.",
             DANGER,
         ));
         row_with(
@@ -1262,8 +1252,8 @@ fn soundcloud(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             ui,
             pg,
             "OAuth token",
-            "Optional, for private likes and playlists. Find it in your browser on soundcloud.com: \
-             DevTools → Application → Cookies → oauth_token.",
+            "For private likes and playlists. On soundcloud.com: DevTools → Application → Cookies \
+             → oauth_token.",
             &mut cfg.soundcloud.oauth_token,
             "2-123456-…",
             true,
@@ -1302,11 +1292,9 @@ fn lastfm(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             },
         );
         let help = if cfg.lastfm.scrobble_instantly {
-            "Every song scrobbles the moment it starts playing, even if you skip it. \
-             Offline scrobbles are queued and sent later."
+            "Songs scrobble as they start, even if you skip them."
         } else {
-            "Songs scrobble after half their length (or 4 minutes), Last.fm's usual rule. \
-             Offline scrobbles are queued and sent later."
+            "Songs scrobble after half their length, or 4 minutes."
         };
         toggle(
             ui,
@@ -1355,8 +1343,8 @@ fn discord(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
             ui,
             pg,
             "Application ID",
-            "Create a free app at discord.com/developers/applications (name it e.g. \"Utako\") and paste its \
-             Application ID. Works with the Discord desktop app, Vesktop and arRPC.",
+            "The Application ID of a free app from discord.com/developers/applications. Works \
+             with Discord, Vesktop and arRPC.",
             &mut cfg.discord.app_id,
             "e.g. 1234567890123456789",
             false,
@@ -1390,8 +1378,7 @@ fn playback(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
     group(ui, pg, Head::None, |ui, pg| {
         toggle(ui, pg, "Gapless playback", "", &mut cfg.playback.gapless);
         let help = if cfg.playback.crossfade > 0.0 {
-            "Each song fades into the next, between any sources (local files, SoundCloud, Spotify). \
-             Albums stay gapless unless you tick the box below. Crossfade is off in bit-perfect mode."
+            "Each song fades into the next. Albums stay gapless. Off in bit-perfect mode."
         } else {
             ""
         };
@@ -1415,8 +1402,7 @@ fn playback(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
             ui,
             pg,
             "Even out loudness",
-            "Local files and SoundCloud, about as loud as Spotify's \"Normalize volume\": files with ReplayGain \
-             tags follow their tags, SoundCloud and untagged files play 6 dB quieter. Off in bit-perfect mode.",
+            "Local files and SoundCloud play about as loud as Spotify. Off in bit-perfect mode.",
             &mut cfg.playback.replaygain,
         );
         if !cfg!(target_os = "ios") {
@@ -1424,9 +1410,8 @@ fn playback(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
                 ui,
                 pg,
                 "Open music videos in the player when they start",
-                "The video plays in the middle of the window; its back arrow returns to your page while the \
-                 song plays on, and the screen button in the player brings it back. Off, music videos start \
-                 like songs. Needs ffmpeg (it comes with Utako on Windows and macOS).",
+                "Off: music videos start like songs, and the screen button in the player shows \
+                 them.",
                 &mut cfg.playback.youtube_video,
             );
         }
@@ -1491,17 +1476,15 @@ fn audio(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut Set
                 pg,
                 "Bit-perfect output for lossless files",
                 if cfg!(windows) {
-                    "Opens the device exclusively (WASAPI exclusive mode) and skips ReplayGain so FLAC/ALAC/WAV \
-                     reach your DAC untouched. Keep the volume at 100% and use your DAC or amp for volume."
+                    "Lossless files reach your DAC untouched (WASAPI exclusive, no ReplayGain). \
+                     Keep the volume at 100%."
                 } else if cfg!(target_os = "macos") {
-                    "Opens the device exclusively (Core Audio hog mode) and skips ReplayGain so FLAC/ALAC/WAV \
-                     reach your DAC untouched at their own sample rate. Keep the volume at 100% and use your DAC \
-                     or amp for volume."
+                    "Lossless files reach your DAC untouched at their own sample rate (hog mode, \
+                     no ReplayGain). Keep the volume at 100%."
                 } else {
-                    "Opens the device exclusively and skips ReplayGain so FLAC/ALAC/WAV reach your DAC untouched. \
-                     For true bit-perfect playback pick an \"alsa/hw:…\" device above, keep the volume at 100% and \
-                     use your DAC or amp for volume. Through PipeWire, audio is resampled to PipeWire's rate unless \
-                     you allow more rates (see the README)."
+                    "Lossless files reach your DAC untouched (no ReplayGain). Pick an \
+                     \"alsa/hw:…\" device above and keep the volume at 100%. PipeWire resamples \
+                     unless you allow more rates (see the README)."
                 },
                 &mut cfg.playback.bit_perfect,
             );
@@ -1510,10 +1493,9 @@ fn audio(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, st: &mut Set
             ui,
             pg,
             if cfg!(target_os = "ios") {
-                "Local files and SoundCloud play in Utako's own player; Spotify plays through librespot \
-                 (max 320 kbps Ogg Vorbis). iOS chooses the output: speaker, headphones, Bluetooth or AirPlay."
+                "Spotify plays through librespot (320 kbps at most). iOS chooses the output."
             } else {
-                "Local files and SoundCloud play through mpv; Spotify plays through librespot (max 320 kbps Ogg Vorbis)."
+                "Spotify plays through librespot (320 kbps at most); everything else through mpv."
             },
             "",
         );
@@ -1527,8 +1509,7 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             ui,
             pg,
             "Download folder",
-            "Empty: a SoundCloud, Spotify or Music videos folder inside your first library folder, so \
-             downloads show up in Local Files too.",
+            "Empty: a folder for each service in your first music folder.",
             "browse",
             |ui| {
                 ui.horizontal(|ui| {
@@ -1572,8 +1553,8 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
                 pg,
                 "Send downloads to the media server",
                 &format!(
-                    "Songs you download go into {name}'s music, in a folder for each service, instead of on this \
-                     device. While it isn't connected, they're saved here.{now}"
+                    "Downloads go into {name}'s music instead of this device. Saved here while it \
+                     isn't connected.{now}"
                 ),
                 &mut cfg.downloads.to_server,
             );
@@ -1585,9 +1566,8 @@ fn downloads(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             note(
                 ui,
                 pg,
-                "Saved as video files with their picture and sound (up to 1080p, MP4 when YouTube has it), in a \
-                 Music videos folder (on the media server too, when downloads go there). They play in the player \
-                 like any music video.",
+                "Saved as video files, up to 1080p (MP4 when YouTube has it), in a Music videos \
+                 folder.",
                 "music videos youtube download video mp4",
             );
         });
@@ -1601,10 +1581,8 @@ fn spotify_downloads(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
         pg,
         Head::Title(
             "Spotify songs",
-            "Saved straight from Spotify through your Spotify login here: the same Ogg Vorbis file Utako \
-             plays, 320 kbps with Premium. Then tagged with the song's details from Spotify: album, artists, \
-             track and disc number, release date, ISRC, label, copyright and full-size cover. While you \
-             aren't logged in to Spotify, the same recording is saved from SoundCloud instead.",
+            "Spotify's own Ogg Vorbis (320 kbps with Premium), tagged with everything Spotify \
+             knows. Without a Spotify login, the same recording from SoundCloud.",
         ),
         |ui, pg| {
             if cfg!(target_os = "ios") {
@@ -1614,8 +1592,7 @@ fn spotify_downloads(ui: &mut Ui, pg: &mut Page, cfg: &mut Config) {
                 ui,
                 pg,
                 "Save Spotify downloads as MP3 instead of Ogg Vorbis",
-                "Ogg Vorbis is Spotify's own audio, saved as it is. MP3 is converted from it: it can't add \
-                 quality, but plays on every device and player.",
+                "Converting can't add quality, but MP3 plays everywhere.",
                 &mut cfg.downloads.spotify_mp3,
             );
         },
@@ -1648,6 +1625,15 @@ fn appearance(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
                 ui.color_edit_button_srgb(&mut cfg.ui.accent);
             });
         });
+        let mut glass = !cfg.ui.classic_look;
+        toggle(
+            ui,
+            pg,
+            "Glass look",
+            "Off: the classic look, flat and solid.",
+            &mut glass,
+        );
+        cfg.ui.classic_look = !glass;
         toggle(
             ui,
             pg,
@@ -1701,9 +1687,8 @@ fn media_server(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
             ui,
             pg,
             "Use a media server",
-            "mediaserver (github.com/v0-0x/mediaserver) on a Raspberry Pi or another computer that stays \
-             on: its music plays here, and your settings and logins go through it to your other devices. \
-             It needs mediaserver 1.0.8 or newer, which has a music side.",
+            "mediaserver on a Raspberry Pi or a computer that stays on: its music plays here, and \
+             your settings and logins reach your other devices through it.",
             &mut cfg.server.enabled,
         );
         if !cfg.server.enabled {
@@ -1754,9 +1739,8 @@ fn media_server(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config) {
         pg,
         Head::Title(
             "Settings and logins",
-            "Send them from the device that has them, then Get them on another one (an iPhone, say). \
-             They're sealed so only the server can read them, and it seals them again for each device \
-             its dashboard lets in.",
+            "Send from one device, Get on another. Only the server and the devices it lets in can \
+             read them.",
         ),
         |ui, pg| {
             stack(ui, pg, "", "", "send get settings logins connect again", |ui| {
@@ -1816,9 +1800,8 @@ fn server_upload(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, server: &crate::servic
             ui,
             pg,
             "Upload songs to it",
-            "Into the server's music, as they are on this computer: an artist's or an album's folder keeps its \
-             name and what's in it. What's there already isn't sent again, and an upload cut short carries on \
-             where it stopped.",
+            "Folders keep their names. What's there already isn't sent again, and a stopped \
+             upload carries on.",
             "upload folder song",
             |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -1881,8 +1864,7 @@ fn updates(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, paths: &Pa
     let help = if !crate::updater::can_install() {
         "On Linux, update the way you installed: cd sumo-music && git pull && makepkg -sif"
     } else if crate::updater::NEEDS_PASSWORD {
-        "Update now downloads the new version's package, checks it, asks for your password and \
-         installs it with pacman. Utako then starts again."
+        "Update now asks for your password and installs with pacman. Utako then restarts."
     } else {
         ""
     };
@@ -1920,8 +1902,7 @@ fn updates(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, cfg: &mut Config, paths: &Pa
         );
         toggle(ui, pg, "Check for updates automatically", "", &mut cfg.updates.check);
         let beta_help = if cfg.updates.beta {
-            "You get new versions first, before everyone else. Betas can have bugs; turning this off keeps \
-             the beta until a newer stable version comes out."
+            "New versions first. They can have bugs."
         } else {
             "Turn on to get new versions first, as betas, before they go out to everyone."
         };
@@ -1987,13 +1968,12 @@ fn backup(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, st: &mut SettingsState) {
         pg,
         Head::Title(
             "Export",
-            "Saves everything in Settings to one file, with your keys and logins and your own playlists if \
-             you like. Import it on another computer (Linux, Windows or macOS) to carry on where you left off.",
+            "One file with everything in Settings. Import it on another computer to carry on \
+             there.",
         ),
         |ui, pg| {
             let keys_help = if st.export_keys {
-                "Spotify, Last.fm, SoundCloud, Discord. The file then holds your passwords and tokens: keep \
-                 it private."
+                "The file then holds your passwords and tokens: keep it private."
             } else {
                 "Spotify, Last.fm, SoundCloud, Discord."
             };
@@ -2056,8 +2036,7 @@ fn backup(ui: &mut Ui, pg: &mut Page, cx: &mut Cx, st: &mut SettingsState) {
         pg,
         Head::Title(
             "Import",
-            "Importing replaces your settings (folders and programs that aren't on this computer stay as they \
-             are), adds the playlists, and restarts Utako.",
+            "Importing replaces your settings, adds the playlists and restarts Utako.",
         ),
         |ui, pg| {
             stack(

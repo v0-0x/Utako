@@ -135,8 +135,8 @@ pub(super) fn home(ui: &mut Ui, cx: &mut Cx) {
             widgets::grid(ui, playlists.len(), 168.0, |ui, i, w| {
                 let p = playlists[i];
                 let sub = match p.kind.source() {
-                    Some(s) => format!("{} · {} songs", s.label(), p.track_ids.len()),
-                    None => format!("{} songs", p.track_ids.len()),
+                    Some(s) => format!("{} · {}", s.label(), theme::song_count(p.track_ids.len())),
+                    None => theme::song_count(p.track_ids.len()),
                 };
                 let (resp, play) = widgets::tile(ui, w, &p.name, &sub, cx.accent, |ui, r| {
                     widgets::playlist_cover(ui, cx.art, p, r, 6)
@@ -166,8 +166,8 @@ pub(super) fn home(ui: &mut Ui, cx: &mut Cx) {
 
 pub(super) fn shortcut_card(ui: &mut Ui, cx: &mut Cx, p: &Playlist, w: f32) {
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 64.0), Sense::click());
-    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS), pal().card);
-    widgets::fade_fill(ui, resp.id, rect, RADIUS, resp.hovered(), pal().hover);
+    theme::paint_card(ui.painter(), rect);
+    widgets::fade_fill(ui, resp.id, rect, RADIUS, resp.hovered(), theme::hover_fill());
     let art = Rect::from_min_size(rect.min + vec2(6.0, 6.0), vec2(52.0, 52.0));
     widgets::playlist_cover(ui, cx.art, p, art, 10);
     let here = widgets::plays_from(cx, &p.name, |id| p.track_ids.iter().any(|t| t == id));
@@ -222,13 +222,7 @@ pub(super) fn onboarding(ui: &mut Ui, cx: &mut Cx) {
         ui.set_width(ui.available_width().min(640.0));
         ui.label(egui::RichText::new("Let's bring in your music").font(theme::bold_font(20.0)));
         ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(
-                "Utako plays your local files, Spotify (Premium) and SoundCloud in one place, \
-                 with synced lyrics, Discord status and Last.fm scrobbling.",
-            )
-            .color(pal().text_dim),
-        );
+        ui.label(egui::RichText::new("Your files, Spotify and SoundCloud in one place.").color(pal().text_dim));
         ui.add_space(12.0);
         for (glyph, color, text) in [
             (

@@ -47,7 +47,7 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
     };
     panel
         .show_separator_line(false)
-        .frame(egui::Frame::new().fill(pal().window_bg).inner_margin(Margin {
+        .frame(egui::Frame::new().inner_margin(Margin {
             left: GAP as i8,
             right: 0,
             top: GAP as i8,
@@ -133,11 +133,15 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                 }
             }
             // The playlist list fills the space above Settings (or the Last.fm account card).
-            let bottom = match (super::profile::username(cx.feed).is_some(), st.collapsed) {
+            // In Glass, Themes and Settings are one row of icons above the account.
+            let icons = theme::glass() && !st.collapsed;
+            let account = super::profile::username(cx.feed).is_some();
+            let bottom = match (account, st.collapsed) {
+                (false, _) if icons => 12.0,
                 (false, _) => 50.0,
                 (true, false) => 66.0,
                 (true, true) => 92.0,
-            } + 38.0; // Themes
+            } + 38.0; // Themes, or the row of icons
             let list_h = (ui.available_height() - bottom).max(40.0);
             let view = st.view.clone();
             let collapsed = st.collapsed;
@@ -153,11 +157,7 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                     })
                     .collect();
                 if playlists.is_empty() && !collapsed {
-                    ui.label(
-                        egui::RichText::new("Playlists you make or import from Spotify and SoundCloud show up here.")
-                            .small()
-                            .color(pal().text_faint),
-                    );
+                    ui.label(egui::RichText::new("No playlists yet").small().color(pal().text_faint));
                 }
                 egui::ScrollArea::vertical()
                     .id_salt("sidebar-playlists")
@@ -169,9 +169,14 @@ pub fn sidebar(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, size: SidebarSiz
                     });
             });
             ui.add_space(6.0);
-            themes_button(ui, cx, st.collapsed);
-            if !super::profile::sidebar_account(ui, cx, st.view, st.collapsed) {
-                nav_item(ui, cx, icon::GEAR, "Settings", View::Settings, st.view, st.collapsed);
+            if icons {
+                bottom_icons(ui, cx, st.view);
+                super::profile::sidebar_account(ui, cx, st.view, false, false);
+            } else {
+                themes_button(ui, cx, st.collapsed);
+                if !super::profile::sidebar_account(ui, cx, st.view, st.collapsed, true) {
+                    nav_item(ui, cx, icon::GEAR, "Settings", View::Settings, st.view, st.collapsed);
+                }
             }
         })
         .response
@@ -214,6 +219,18 @@ fn brand(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
 }
 
 fn section_label(ui: &mut Ui, text: &str, collapsed: bool) {
+    // Glass has no group names: a hairline between the parts.
+    if theme::glass() && !collapsed {
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width() - 4.0, 13.0), Sense::hover());
+        ui.painter().line_segment(
+            [
+                Pos2::new(r.left() + 10.0, r.center().y),
+                Pos2::new(r.right() - 10.0, r.center().y),
+            ],
+            Stroke::new(1.0, Color32::from_white_alpha(18)),
+        );
+        return;
+    }
     if collapsed {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width() - 4.0, 12.0), Sense::hover());
         ui.painter().line_segment(
@@ -254,11 +271,7 @@ fn nav_item(
     let w = ui.available_width() - 4.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
     let hovered = resp.hovered();
-    if active {
-        ui.painter().rect_filled(rect, CornerRadius::same(10), pal().selected);
-    } else {
-        widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().card);
-    }
+    nav_fill(ui, cx, &resp, rect, active);
     let color = if active || hovered { TEXT } else { pal().text_dim };
     let font = if active {
         theme::fill_icon_font(18.0)
@@ -288,19 +301,53 @@ fn nav_item(
     resp
 }
 
+/// What's behind a sidebar entry: the open page's is a soft fill with a bar in the accent at
+/// its left in Glass, a solid tile in the classic look; the others light up under the pointer.
+pub fn nav_fill(ui: &Ui, cx: &Cx, resp: &egui::Response, rect: Rect, active: bool) {
+    if !active {
+        let hover = if theme::glass() {
+            Color32::from_white_alpha(10)
+        } else {
+            pal().card
+        };
+        widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), hover);
+    } else if theme::glass() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(10), Color32::from_white_alpha(16));
+        let bar = Rect::from_min_max(
+            Pos2::new(rect.left(), rect.center().y - 9.0),
+            Pos2::new(rect.left() + 3.0, rect.center().y + 9.0),
+        );
+        ui.painter().rect_filled(bar, CornerRadius::same(2), cx.accent);
+    } else {
+        ui.painter().rect_filled(rect, CornerRadius::same(10), pal().selected);
+    }
+}
+
 fn playlists_header(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
     if collapsed {
         section_label(ui, "", true);
         return;
     }
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width() - 4.0, 26.0), Sense::hover());
-    ui.painter().text(
-        Pos2::new(r.left() + 10.0, r.center().y),
-        Align2::LEFT_CENTER,
-        "PLAYLISTS",
-        theme::bold_font(11.0),
-        pal().text_faint,
-    );
+    if theme::glass() {
+        // No name: the hairline, with New playlist at its end.
+        ui.painter().line_segment(
+            [
+                Pos2::new(r.left() + 10.0, r.center().y),
+                Pos2::new(r.right() - 32.0, r.center().y),
+            ],
+            Stroke::new(1.0, Color32::from_white_alpha(18)),
+        );
+    } else {
+        ui.painter().text(
+            Pos2::new(r.left() + 10.0, r.center().y),
+            Align2::LEFT_CENTER,
+            "PLAYLISTS",
+            theme::bold_font(11.0),
+            pal().text_faint,
+        );
+    }
     let plus = Rect::from_center_size(Pos2::new(r.right() - 14.0, r.center().y), vec2(24.0, 24.0));
     let resp = ui
         .interact(plus, Id::new("new-playlist"), Sense::click())
@@ -328,10 +375,11 @@ fn playlist_row(ui: &mut Ui, cx: &mut Cx, p: &crate::model::Playlist, view: &Vie
     let (rect, resp) = ui.allocate_exact_size(vec2(w, PLAYLIST_ROW), Sense::click());
     let active = *view == View::Playlist(p.id.clone());
     let hovered = resp.hovered() || resp.context_menu_opened();
-    if active {
-        ui.painter().rect_filled(rect, CornerRadius::same(10), pal().selected);
+    if active || !theme::glass() || !resp.context_menu_opened() {
+        nav_fill(ui, cx, &resp, rect, active);
     } else {
-        widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().card);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(10), Color32::from_white_alpha(10));
     }
     let art = if collapsed {
         Rect::from_center_size(rect.center(), vec2(34.0, 34.0))
@@ -443,7 +491,12 @@ fn search_box(ui: &mut Ui, cx: &mut Cx, st: &mut SidebarState, rect: Rect) {
     ui.painter().rect_filled(
         rect,
         CornerRadius::same(10),
-        if hovered && !focused { pal().hover } else { pal().card },
+        match (theme::glass(), hovered && !focused) {
+            (true, true) => Color32::from_white_alpha(20),
+            (true, false) => Color32::from_white_alpha(12),
+            (false, true) => pal().hover,
+            (false, false) => pal().card,
+        },
     );
     if focused {
         ui.painter().rect_stroke(
@@ -647,7 +700,7 @@ pub fn toolbar(ui: &mut Ui, cx: &mut Cx, can_back: bool, can_forward: bool, sear
         );
         let hovered = enabled && resp.hovered();
         ui.painter().rect_filled(r, CornerRadius::same(10), pal().card);
-        widgets::fade_fill(ui, resp.id, r, 10, hovered, pal().hover);
+        widgets::fade_fill(ui, resp.id, r, 10, hovered, theme::hover_fill());
         let color = match (enabled, hovered) {
             (false, _) => pal().text_faint,
             (true, true) => TEXT,
@@ -678,20 +731,10 @@ pub fn player_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
         .exact_size(76.0 + 2.0 * GAP)
         .resizable(false)
         .show_separator_line(false)
-        .frame(
-            egui::Frame::new()
-                .fill(pal().window_bg)
-                .inner_margin(Margin::same(GAP as i8)),
-        )
+        .frame(egui::Frame::new().inner_margin(Margin::same(GAP as i8)))
         .show(ui, |ui| {
             let dock = ui.max_rect();
-            ui.painter().rect(
-                dock,
-                CornerRadius::same(18),
-                pal().card,
-                Stroke::new(1.0, theme::mix(pal().hover, pal().selected, 0.35)),
-                egui::StrokeKind::Inside,
-            );
+            dock_background(ui, dock);
             let compact = dock.width() < 900.0;
             let cy = dock.center().y;
 
@@ -908,20 +951,10 @@ fn phone_dock(ui: &mut Ui, cx: &mut Cx, right: Option<RightTab>) {
         .exact_size(118.0 + 2.0 * GAP)
         .resizable(false)
         .show_separator_line(false)
-        .frame(
-            egui::Frame::new()
-                .fill(pal().window_bg)
-                .inner_margin(Margin::same(GAP as i8)),
-        )
+        .frame(egui::Frame::new().inner_margin(Margin::same(GAP as i8)))
         .show(ui, |ui| {
             let dock = ui.max_rect();
-            ui.painter().rect(
-                dock,
-                CornerRadius::same(18),
-                pal().card,
-                Stroke::new(1.0, theme::mix(pal().hover, pal().selected, 0.35)),
-                egui::StrokeKind::Inside,
-            );
+            dock_background(ui, dock);
 
             // Top: the song.
             let top = Rect::from_min_max(
@@ -1111,17 +1144,53 @@ pub fn holiday_notice(ui: &mut Ui, cx: &mut Cx, h: &super::themes::Holiday) -> O
 
 /// "Themes" above Settings: the color themes and the holiday themes in a menu that stays
 /// open while you try them. While a holiday is on, it shows the holiday's drawing.
-fn themes_button(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
+/// Themes and Settings as two icons side by side, in the middle of the sidebar's foot (Glass).
+fn bottom_icons(ui: &mut Ui, cx: &mut Cx, view: &View) {
     let w = ui.available_width() - 4.0;
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
-    let hovered = resp.hovered();
-    widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().card);
-    let color = if hovered { TEXT } else { pal().text_dim };
-    let icon_x = if collapsed { rect.center().x } else { rect.left() + 20.0 };
-    let center = Pos2::new(icon_x, rect.center().y);
+    let (row, _) = ui.allocate_exact_size(vec2(w, 38.0), Sense::hover());
+    let slot = |i: f32| {
+        Rect::from_center_size(
+            Pos2::new(row.center().x + (i - 0.5) * 46.0, row.center().y),
+            vec2(40.0, 36.0),
+        )
+    };
+    let themes = ui
+        .interact(slot(0.0), Id::new("sidebar-themes"), Sense::click())
+        .on_hover_cursor(CursorIcon::PointingHand);
+    nav_fill(ui, cx, &themes, slot(0.0), false);
+    let color = if themes.hovered() { TEXT } else { pal().text_dim };
+    themes_glyph(ui, cx, slot(0.0).center(), color);
+    themes_menu(cx, &themes.on_hover_text("Themes"));
+    let on = *view == View::Settings;
+    let settings = ui
+        .interact(slot(1.0), Id::new("sidebar-settings-icon"), Sense::click())
+        .on_hover_cursor(CursorIcon::PointingHand);
+    if on && theme::glass() {
+        ui.painter()
+            .rect_filled(slot(1.0), CornerRadius::same(10), Color32::from_white_alpha(16));
+    } else {
+        nav_fill(ui, cx, &settings, slot(1.0), on);
+    }
+    theme::paint_icon(
+        ui.painter(),
+        slot(1.0).center(),
+        icon::GEAR,
+        if on {
+            theme::fill_icon_font(18.0)
+        } else {
+            theme::icon_font(18.0)
+        },
+        if on || settings.hovered() { TEXT } else { pal().text_dim },
+    );
+    if settings.on_hover_text("Settings").clicked() {
+        cx.actions.push(Action::Go(View::Settings));
+    }
+}
+
+/// The Themes icon: the palette, or the holiday's drawing in a chip of its colour.
+fn themes_glyph(ui: &Ui, cx: &Cx, center: Pos2, color: Color32) {
     match cx.holiday {
         Some(h) => {
-            // The holiday's drawing in a small round chip of its colour.
             ui.painter()
                 .circle_filled(center, 12.0, theme::with_alpha(cx.accent, 46));
             theme::paint_icon(ui.painter(), center, h.glyph, theme::fill_icon_font(15.0), cx.accent);
@@ -1130,6 +1199,31 @@ fn themes_button(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
             theme::paint_icon(ui.painter(), center, icon::PALETTE, theme::icon_font(18.0), color);
         }
     }
+}
+
+fn themes_menu(cx: &mut Cx, resp: &egui::Response) {
+    egui::Popup::menu(resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_width(300.0);
+            theme_choices(ui, cx);
+            ui.add_space(6.0);
+            if ui.button(theme::ic(icon::GEAR, "More in Settings")).clicked() {
+                cx.actions.push(Action::Go(View::Settings));
+                ui.close();
+            }
+        });
+}
+
+fn themes_button(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
+    let w = ui.available_width() - 4.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+    let hovered = resp.hovered();
+    widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().card);
+    let color = if hovered { TEXT } else { pal().text_dim };
+    let icon_x = if collapsed { rect.center().x } else { rect.left() + 20.0 };
+    let center = Pos2::new(icon_x, rect.center().y);
+    themes_glyph(ui, cx, center, color);
     if !collapsed {
         ui.painter().text(
             Pos2::new(rect.left() + 40.0, rect.center().y),
@@ -1141,17 +1235,7 @@ fn themes_button(ui: &mut Ui, cx: &mut Cx, collapsed: bool) {
     }
     let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
     let resp = if collapsed { resp.on_hover_text("Themes") } else { resp };
-    egui::Popup::menu(&resp)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            ui.set_width(300.0);
-            theme_choices(ui, cx);
-            ui.add_space(6.0);
-            if ui.button(theme::ic(icon::GEAR, "More in Settings")).clicked() {
-                cx.actions.push(Action::Go(View::Settings));
-                ui.close();
-            }
-        });
+    themes_menu(cx, &resp);
 }
 
 /// The color themes (little drawings of the window in each), the holiday choice and the
@@ -1291,7 +1375,7 @@ enum Look {
 fn dock_button(ui: &mut Ui, rect: Rect, glyph: &str, look: Look, accent: Color32, tooltip: &str) -> egui::Response {
     let resp = ui.interact(rect, Id::new(("dock", tooltip)), Sense::click());
     let hovered = resp.hovered();
-    widgets::fade_fill(ui, resp.id, rect, 10, hovered, pal().hover);
+    widgets::fade_fill(ui, resp.id, rect, 10, hovered, theme::hover_fill());
     let on = matches!(look, Look::Toggle(true) | Look::Like(true));
     let color = match (on, hovered) {
         (true, _) => accent,
@@ -1550,11 +1634,29 @@ pub fn right_overlay(ctx: &egui::Context, cx: &mut Cx, tab: RightTab, area: Rect
         });
 }
 
+/// The player dock's tile: a card, in Glass a see-through one with a light edge.
+fn dock_background(ui: &Ui, dock: Rect) {
+    let (fill, stroke) = if theme::glass() {
+        (
+            theme::mix(pal().card, pal().panel, 0.3).gamma_multiply(0.7),
+            Stroke::new(1.0, Color32::from_white_alpha(24)),
+        )
+    } else {
+        (
+            pal().card,
+            Stroke::new(1.0, theme::mix(pal().hover, pal().selected, 0.35)),
+        )
+    };
+    ui.painter()
+        .rect(dock, CornerRadius::same(18), fill, stroke, egui::StrokeKind::Inside);
+}
+
 /// The tabs (Playing, Lyrics, Queue) and what the chosen one shows.
 fn right_panel_body(ui: &mut Ui, cx: &mut Cx, tab: RightTab) {
     egui::Frame::new()
-        .fill(pal().panel)
-        .corner_radius(CornerRadius::same(RADIUS))
+        .fill(theme::panel_fill())
+        .stroke(theme::edge())
+        .corner_radius(CornerRadius::same(theme::panel_radius()))
         .inner_margin(Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -2069,7 +2171,7 @@ fn queue_row(ui: &mut Ui, cx: &mut Cx, t: &crate::model::Track, index: Option<us
     if resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     }
-    widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), pal().hover);
+    widgets::fade_fill(ui, resp.id, rect, 10, resp.hovered(), theme::hover_fill());
     let art = Rect::from_min_size(rect.min + vec2(4.0, 6.0), vec2(40.0, 40.0));
     let src = t.art.clone().or_else(|| {
         if current {

@@ -355,6 +355,8 @@ pub struct UiConfig {
     pub holiday: String,
     /// The holiday animations (snow, bats...).
     pub holiday_effects: bool,
+    /// The look from before 0.10 (flat, solid panels) instead of Glass.
+    pub classic_look: bool,
     /// The holiday whose "it's on" notice was last shown, with its year ("halloween-2026").
     pub holiday_seen: String,
 }
@@ -389,6 +391,7 @@ impl Default for UiConfig {
             theme: "sumo".into(),
             holiday: "auto".into(),
             holiday_effects: true,
+            classic_look: false,
             holiday_seen: String::new(),
         }
     }

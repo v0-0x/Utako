@@ -249,7 +249,7 @@ pub(super) fn search(ui: &mut Ui, cx: &mut Cx, st: &mut ViewState) {
             name: a.name.clone(),
             image: a.art.clone(),
             source: Source::Local,
-            subtitle: format!("{} songs in your library", a.track_ids.len()),
+            subtitle: format!("{} in your library", theme::song_count(a.track_ids.len())),
         }));
 
         // Songs: the catalogue results first, like Spotify.
@@ -501,9 +501,8 @@ pub(super) fn source_corner(ui: &Ui, art: Rect, source: Source) {
 
 pub(super) fn top_card_frame(ui: &mut Ui, width: f32) -> (Rect, egui::Response) {
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 230.0), Sense::click());
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(RADIUS + 2), pal().card);
-    widgets::fade_fill(ui, resp.id, rect, RADIUS + 2, resp.hovered(), pal().hover);
+    theme::paint_card(ui.painter(), rect);
+    widgets::fade_fill(ui, resp.id, rect, RADIUS + 2, resp.hovered(), theme::hover_fill());
     (rect, resp.on_hover_cursor(CursorIcon::PointingHand))
 }
 
@@ -761,11 +760,8 @@ pub(super) fn browse(ui: &mut Ui, cx: &mut Cx) {
                 .color(pal().text_dim),
         );
         ui.label(
-            egui::RichText::new(
-                "Tip: paste a Spotify or SoundCloud link (artist, album, playlist or song) into the \
-                 search bar to open it.",
-            )
-            .color(pal().text_dim),
+            egui::RichText::new("Paste a Spotify or SoundCloud link into the search bar to open it.")
+                .color(pal().text_dim),
         );
     });
     let _ = cx;
