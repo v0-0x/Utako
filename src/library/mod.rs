@@ -3,6 +3,7 @@
 pub mod db;
 pub mod m3u;
 pub mod quality;
+pub mod relink;
 pub mod scanner;
 pub mod tags;
 

@@ -280,6 +280,8 @@ impl Service {
             lib.reindex();
         }
         self.shared.feed.write().unwrap().scan = None;
+        // Files that were a media server's songs in the playlists are those songs now.
+        self.relink_playlists();
         // A scan reads every changed file's tags: hand that memory back.
         crate::memory::trim();
         if changed > 0 || !result.removed.is_empty() {

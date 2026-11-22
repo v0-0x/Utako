@@ -300,6 +300,37 @@ impl Service {
             track_ids: tracks.iter().map(|t| t.id.clone()).collect(),
         };
         self.save_playlists(vec![playlist], &[]);
+        self.relink_playlists();
+    }
+
+    /// Playlists' media-server songs that are files of this device's library now (the drive
+    /// plugged in here), or at another place on the server, are pointed there: they aren't
+    /// added again by hand (`library::relink`).
+    pub(super) fn relink_playlists(&mut self) {
+        let live: Option<(String, HashSet<String>)> =
+            self.server.as_ref().zip(self.server_library.as_ref()).map(|(s, lib)| {
+                let ids = lib
+                    .tracks
+                    .iter()
+                    .map(|t| Track::server_id(&s.host.id, &t.path))
+                    .collect();
+                (s.host.id.clone(), ids)
+            });
+        let (changed, found) = {
+            let lib = self.shared.library.read().unwrap();
+            crate::library::relink::relink(&lib, live.as_ref().map(|(id, ids)| (id.as_str(), ids)))
+        };
+        if changed.is_empty() {
+            return;
+        }
+        let lists = changed.len();
+        self.save_playlists(changed, &[]);
+        self.shared.info(format!(
+            "{found} media server {} in {lists} {} found again: {} where the files are now",
+            if found == 1 { "song" } else { "songs" },
+            if lists == 1 { "playlist" } else { "playlists" },
+            if found == 1 { "it plays from" } else { "they play from" },
+        ));
     }
 
     /// Keeps the server's songs: the new ones, and the ones that changed there (their tags, a
